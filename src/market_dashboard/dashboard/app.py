@@ -7,10 +7,8 @@ import streamlit as st
 
 from market_dashboard.config import (
     DASHBOARD_LINES,
-    LEFT_SECTIONS,
-    RIGHT_SECTIONS,
-    SECTION_LABELS,
     DashboardLine,
+    SECTION_LABELS,
     Settings,
 )
 from market_dashboard.database.connection import get_connection
@@ -102,9 +100,12 @@ def _compute_weighted_change(
 # HTML rendering
 # ---------------------------------------------------------------------------
 
-def _render_section(title: str, rows: list[dict]) -> str:
+_MOBILE_ORDER = ("equity", "fixed_income", "alternatives", "themes")
+
+
+def _render_section(sec_key: str, title: str, rows: list[dict]) -> str:
     html = (
-        f'<div class="md-sec">'
+        f'<div class="md-sec" data-sec="{sec_key}">'
         f'<div class="md-banner">{title}</div>'
         f'<table class="md"><tbody>'
     )
@@ -120,30 +121,32 @@ def _render_section(title: str, rows: list[dict]) -> str:
 
 
 def _render_grid(section_rows: dict[str, list[dict]]) -> str:
-    """Build a two-column layout matching the reference screenshot."""
-    left_html = ""
-    for sec in LEFT_SECTIONS:
-        left_html += _render_section(SECTION_LABELS[sec], section_rows.get(sec, []))
-    right_html = ""
-    for sec in RIGHT_SECTIONS:
-        right_html += _render_section(SECTION_LABELS[sec], section_rows.get(sec, []))
-    return f'<div class="md-grid"><div class="md-col">{left_html}</div><div class="md-col">{right_html}</div></div>'
+    """Build a responsive grid: 2 columns on desktop, stacked on mobile."""
+    inner = ""
+    for sec in _MOBILE_ORDER:
+        inner += _render_section(sec, SECTION_LABELS[sec], section_rows.get(sec, []))
+    return f'<div class="md-grid">{inner}</div>'
 
 
 _CSS = """
 <style>
 .md-grid {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-auto-flow: dense;
+    gap: 0 5rem;
     justify-content: center;
-    gap: 5rem;
+    max-width: 960px;
+    margin: 0 auto;
     padding-top: 1.5rem;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     color: #d4d4d4;
 }
-.md-col {
-    display: flex;
-    flex-direction: column;
-}
+/* Desktop order: left col (equity 1, alternatives 3), right col (fixed_income 2, themes 4) */
+.md-sec[data-sec="equity"]       { order: 1; }
+.md-sec[data-sec="fixed_income"] { order: 2; }
+.md-sec[data-sec="alternatives"] { order: 3; }
+.md-sec[data-sec="themes"]       { order: 4; }
 .md-sec {
     margin-bottom: 1.5rem;
 }
@@ -173,6 +176,17 @@ _CSS = """
     text-align: right;
     font-weight: 600;
     min-width: 76px;
+}
+@media (max-width: 600px) {
+    .md-grid {
+        grid-template-columns: 1fr;
+        gap: 0;
+        padding-top: 1rem;
+    }
+    .md-sec { margin-bottom: 1rem; }
+    .md-banner { font-size: .95rem; }
+    .md { font-size: 1rem; }
+    .md tbody td { padding: 12px 10px; }
 }
 </style>
 """
