@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta, timezone
+
+import streamlit as st
+
+from market_dashboard.config import (
+    DASHBOARD_LINES,
+    LEFT_SECTIONS,
+    RIGHT_SECTIONS,
+    SECTION_LABELS,
+    DashboardLine,
+    Settings,
+)
+from market_dashboard.database.connection import get_connection
+from market_dashboard.database import queries
+from market_dashboard.poller import QuotePoller
+
+logger = logging.getLogger(__name__)
+
+_settings = Settings()
+
+
+def _get_conn():
+    conn = get_connection(_settings.db_path)
+    queries.initialize(conn)
+    return conn
+
+
+@st.cache_resource
+def _start_poller():
+    poller = QuotePoller(_settings, interval=60)
+    poller.start()
+    return poller
+
+
+# ---------------------------------------------------------------------------
+# Formatting helpers (from factor-dashboard)
+# ---------------------------------------------------------------------------
+
+def _cell_bg(val: float | None) -> str:
+    if val is None:
+        return "background:rgba(255,255,255,.05);color:rgba(255,255,255,.3)"
+    clamped = max(-5.0, min(5.0, val))
+    alpha = 0.25 + (abs(clamped) / 5) * 0.55
+    if val > 0:
+        return f"background:rgba(34,120,60,{alpha:.2f});color:#e0e0e0"
+    if val < 0:
+        return f"background:rgba(180,55,55,{alpha:.2f});color:#e0e0e0"
+    return "background:rgba(255,255,255,.05);color:rgba(255,255,255,.5)"
+
+
+def _fmt_pct(v: float | None) -> str:
+    if v is None:
+        return "\u2014"
+    sign = "+" if v >= 0 else ""
+    return f"{sign}{v:.2f}%"
+
+
+# ---------------------------------------------------------------------------
+# Weighted change computation
+# ---------------------------------------------------------------------------
+
+def _compute_weighted_change(
+    line: DashboardLine,
+    quote_map: dict[str, dict],
+) -> tuple[float | None, str | None]:
+    """Return (weighted_pct, freshest_market_time) for a dashboard line."""
+    valid: list[tuple[float, float, datetime]] = []
+    for ticker, weight in zip(line.tickers, line.weights):
+        q = quote_map.get(ticker)
+        if not q or q["change_pct"] is None or q["market_time"] is None:
+            continue
+        try:
+            ts = datetime.fromisoformat(q["market_time"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+        valid.append((q["change_pct"], weight, ts))
+
+    if not valid:
+        return None, None
+
+    # Staleness filter: drop tickers >24h older than freshest
+    if len(valid) > 1:
+        freshest = max(v[2] for v in valid)
+        valid = [v for v in valid if freshest - v[2] <= timedelta(hours=24)]
+
+    if not valid:
+        return None, None
+
+    # Re-normalize weights after any dropped tickers
+    total_weight = sum(v[1] for v in valid)
+    weighted_pct = sum(v[0] * v[1] for v in valid) / total_weight if total_weight else None
+    freshest_time = max(v[2] for v in valid).isoformat()
+    return weighted_pct, freshest_time
+
+
+# ---------------------------------------------------------------------------
+# HTML rendering
+# ---------------------------------------------------------------------------
+
+def _render_section(title: str, rows: list[dict]) -> str:
+    html = (
+        f'<div class="md-sec">'
+        f'<div class="md-banner">{title}</div>'
+        f'<table class="md"><tbody>'
+    )
+    for r in rows:
+        html += (
+            f'<tr>'
+            f'<td class="md-label">{r["label"]}</td>'
+            f'<td class="md-pct" style="{_cell_bg(r["pct"])}">{_fmt_pct(r["pct"])}</td>'
+            f'</tr>'
+        )
+    html += "</tbody></table></div>"
+    return html
+
+
+def _render_grid(section_rows: dict[str, list[dict]]) -> str:
+    """Build a two-column layout matching the reference screenshot."""
+    left_html = ""
+    for sec in LEFT_SECTIONS:
+        left_html += _render_section(SECTION_LABELS[sec], section_rows.get(sec, []))
+    right_html = ""
+    for sec in RIGHT_SECTIONS:
+        right_html += _render_section(SECTION_LABELS[sec], section_rows.get(sec, []))
+    return f'<div class="md-grid"><div class="md-col">{left_html}</div><div class="md-col">{right_html}</div></div>'
+
+
+_CSS = """
+<style>
+.md-grid {
+    display: flex;
+    justify-content: center;
+    gap: 5rem;
+    padding-top: 1.5rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: #d4d4d4;
+}
+.md-col {
+    display: flex;
+    flex-direction: column;
+}
+.md-sec {
+    margin-bottom: 1.5rem;
+}
+.md-banner {
+    background: rgba(70, 100, 140, 0.55);
+    text-align: center;
+    font-weight: 700;
+    font-size: .85rem;
+    padding: 6px 0;
+    margin-bottom: 2px;
+}
+.md {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+    font-size: .92rem;
+}
+.md tbody td {
+    padding: 8px 10px;
+    white-space: nowrap;
+}
+.md tbody td.md-label {
+    font-weight: 400;
+    padding-right: 2rem;
+}
+.md tbody td.md-pct {
+    text-align: right;
+    font-weight: 600;
+    min-width: 76px;
+}
+</style>
+"""
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    _start_poller()
+
+    st.set_page_config(
+        page_title="Market Dashboard",
+        page_icon=":material/monitoring:",
+        layout="wide",
+    )
+
+    st.markdown(
+        "<style>"
+        "#MainMenu {visibility:hidden} header {visibility:hidden} footer {visibility:hidden} "
+        ".block-container {padding-top:.5rem;padding-bottom:0} "
+        ".stApp {background:#1e1e1e}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+    @st.fragment(run_every=60)
+    def _live_display():
+        conn = _get_conn()
+        rows = queries.get_all_quotes(conn)
+
+        quote_map: dict[str, dict] = {}
+        for r in rows:
+            quote_map[r["symbol"]] = {
+                "change_pct": r["change_pct"],
+                "market_time": r["market_time"],
+            }
+
+        # Build section → list of rendered rows
+        section_rows: dict[str, list[dict]] = {}
+        for line in DASHBOARD_LINES:
+            pct, _ = _compute_weighted_change(line, quote_map)
+            section_rows.setdefault(line.section, []).append({
+                "label": line.label,
+                "pct": pct,
+            })
+
+        st.markdown(_render_grid(section_rows), unsafe_allow_html=True)
+
+    _live_display()
+
+
+if __name__ == "__main__":
+    main()
