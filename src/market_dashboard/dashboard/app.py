@@ -207,7 +207,7 @@ def main():
 
     st.markdown(
         "<style>"
-        "#MainMenu {visibility:hidden} header {visibility:hidden} footer {visibility:hidden} "
+        "#MainMenu {visibility:hidden} footer {visibility:hidden} "
         ".block-container {padding-top:.5rem;padding-bottom:0} "
         ".stApp {background:#1e1e1e}"
         "</style>",

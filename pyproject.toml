@@ -10,6 +10,12 @@ requires-python = ">=3.11"
 dependencies = [
     "yfinance>=0.2.36",
     "streamlit>=1.36",
+    "pyxirr>=0.10",
+    "empyrical-reloaded>=0.5.9",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pdfplumber>=0.11.9",
+    "openpyxl>=3.1.5",
 ]
 
 [project.optional-dependencies]
