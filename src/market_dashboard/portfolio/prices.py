@@ -63,12 +63,21 @@ def fetch_historical_prices(
 
     # yfinance 1.1+ always returns MultiIndex columns (Price, Ticker)
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[0] for col in df.columns]
+        df.columns = df.columns.get_level_values(0)
+        # Remove any duplicate columns after flattening
+        df = df.loc[:, ~df.columns.duplicated()]
+
+    if "Close" not in df.columns:
+        logger.warning("No Close column for %s after download", symbol)
+        return 0
 
     count = 0
     for dt_idx, row in df.iterrows():
         price_date = dt_idx.date()
-        close = float(row["Close"])
+        close_val = row["Close"]
+        if hasattr(close_val, "__len__") and not isinstance(close_val, str):
+            close_val = close_val.iloc[0]
+        close = float(close_val)
         adj_close = float(row.get("Adj Close", close))
         volume = int(row["Volume"]) if row.get("Volume") is not None else None
         queries.upsert_historical_price(conn, symbol, price_date, close, adj_close, volume)

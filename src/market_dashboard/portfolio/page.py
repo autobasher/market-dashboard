@@ -313,20 +313,35 @@ def main():
 
     _import_section(conn)
 
-    # Portfolio selector (multiselect — pick one or combine several)
+    # Portfolio selector — checkboxes + Build button
     all_portfolios = queries.get_all_portfolios(conn)
     individual_portfolios = [p for p in all_portfolios if not p["is_aggregate"]]
     if not individual_portfolios:
         st.info("Upload a Vanguard CSV to get started.")
         return
 
-    ind_names = [p["name"] for p in individual_portfolios]
-    selected_names = st.multiselect("Portfolios", ind_names, key="portfolio_multi_select")
+    sel_cols = st.columns(len(individual_portfolios) + 1)
+    checked = {}
+    for i, p in enumerate(individual_portfolios):
+        checked[p["name"]] = sel_cols[i].checkbox(p["name"], key=f"pf_check_{p['portfolio_id']}")
+    build_clicked = sel_cols[-1].button("Build", key="pf_build")
+
+    selected_names = [name for name, on in checked.items() if on]
     if not selected_names:
-        st.info("Select one or more portfolios above.")
+        st.info("Select one or more portfolios and click Build.")
         return
 
-    selected = [p for p in individual_portfolios if p["name"] in selected_names]
+    # Only proceed on Build click (or if already built in session)
+    if build_clicked:
+        st.session_state["built_portfolios"] = selected_names
+    built = st.session_state.get("built_portfolios", [])
+    if not built:
+        st.info("Select one or more portfolios and click Build.")
+        return
+
+    selected = [p for p in individual_portfolios if p["name"] in built]
+    if not selected:
+        return
     is_aggregate = len(selected) > 1
     if not is_aggregate:
         portfolio_id = selected[0]["portfolio_id"]
