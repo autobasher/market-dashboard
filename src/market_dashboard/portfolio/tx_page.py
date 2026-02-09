@@ -5,22 +5,13 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from market_dashboard.config import Settings
-from market_dashboard.database.connection import get_connection
-from market_dashboard.database import queries as dashboard_queries
+from market_dashboard.database.connection import get_app_connection
 from market_dashboard.portfolio import queries
-from market_dashboard.portfolio.schema import initialize_portfolio_schema
 from market_dashboard.portfolio.fifo import rebuild_lots
 from market_dashboard.portfolio.snapshots import build_daily_snapshots
 from market_dashboard.portfolio.models import TxType
 
 
-def _get_conn():
-    settings = Settings()
-    conn = get_connection(settings.db_path)
-    dashboard_queries.initialize(conn)
-    initialize_portfolio_schema(conn)
-    return conn
 
 
 _TX_TYPE_OPTIONS = [t.value for t in TxType]
@@ -210,7 +201,7 @@ def main():
     st.set_page_config(page_title="Transactions", page_icon=":material/receipt_long:", layout="wide")
     st.title("Transactions")
 
-    conn = _get_conn()
+    conn = get_app_connection()
 
     df = _render_transaction_table(conn)
     if df is None or df.empty:

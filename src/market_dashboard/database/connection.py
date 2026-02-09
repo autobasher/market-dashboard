@@ -10,3 +10,16 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def get_app_connection() -> sqlite3.Connection:
+    """Get a connection with both dashboard and portfolio schemas initialized."""
+    from market_dashboard.config import Settings
+    from market_dashboard.database.queries import initialize
+    from market_dashboard.portfolio.schema import initialize_portfolio_schema
+
+    settings = Settings()
+    conn = get_connection(settings.db_path)
+    initialize(conn)
+    initialize_portfolio_schema(conn)
+    return conn
