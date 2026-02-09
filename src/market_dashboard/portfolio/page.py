@@ -386,13 +386,6 @@ def main():
         all_txs.extend(queries.get_transactions(conn, account_id=acct_id))
     disposals = queries.get_disposals(conn)
 
-    # Compute total market value from positions + cash
-    portfolio_value = cash_balance + sum(
-        lot["shares_remaining"] * current_prices.get(lot["symbol"], 0.0)
-        for lot in open_lots
-        if lot["shares_remaining"] > 0
-    )
-
     # Build full snapshot DataFrame
     if snapshots:
         snap_df = pd.DataFrame([dict(r) for r in snapshots])
@@ -439,6 +432,8 @@ def main():
         m1.metric("Day Return", f"{day_return:.2%}" if day_return is not None else "—")
         m2.metric("Day Change", f"${day_change:+,.2f}" if day_change is not None else "—")
     else:
+        # Use snapshot value (authoritative) — lots × prices can diverge
+        portfolio_value = float(snap_df["total_value"].iloc[-1]) if not snap_df.empty else 0.0
         st.metric("Portfolio Value", f"${portfolio_value:,.2f}")
 
         # Compute period start date
