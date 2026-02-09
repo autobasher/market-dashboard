@@ -97,7 +97,7 @@ DISPLAY_GROUPS: dict[str, dict] = {
     "Emerging Markets Multifactor": {"symbols": ["DFEV", "AVES", "GVAL", "GMOM", "FRDM"], "class": "Equity"},
     "Commodity Equities": {"symbols": ["OIH", "URNM", "URA"], "class": "Equity"},
     "Municipal Bonds": {"symbols": ["VTEB", "MUNY"], "class": "Fixed Income"},
-    "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN"], "class": "Alternatives"},
+    "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN", "AQMNX"], "class": "Alternatives"},
     "Global Macro": {"symbols": ["HFGM"], "class": "Alternatives"},
     "Cash": {"symbols": ["VYFXX", "VMMXX", "VMFXX", "BOXX", "VTIP"], "class": "Cash"},
 }
@@ -106,7 +106,6 @@ SYMBOL_LABELS: dict[str, str] = {
     "OUST": "Ouster Inc.",
     "RIVN": "Rivian Automotive",
     "QSPNX": "Long-Short Factors",
-    "AQMNX": "Trend Following",
     "DFGR": "Global Real Estate",
 }
 
