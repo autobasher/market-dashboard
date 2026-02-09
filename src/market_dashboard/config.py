@@ -102,7 +102,13 @@ DISPLAY_GROUPS: dict[str, dict] = {
     "Cash": {"symbols": ["VYFXX", "VMMXX", "VMFXX", "BOXX", "VTIP"], "class": "Cash"},
 }
 
-SYMBOL_LABELS: dict[str, str] = {"OUST": "Ouster Inc.", "RIVN": "Rivian Automotive"}
+SYMBOL_LABELS: dict[str, str] = {
+    "OUST": "Ouster Inc.",
+    "RIVN": "Rivian Automotive",
+    "QSPNX": "Long-Short Factors",
+    "AQMNX": "Trend Following",
+    "DFGR": "Global Real Estate",
+}
 
 GROUPED_SYMS: set[str] = {sym for info in DISPLAY_GROUPS.values() for sym in info["symbols"]}
 
