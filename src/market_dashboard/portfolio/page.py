@@ -217,6 +217,29 @@ def _import_section(conn):
                 st.error(f"Import failed: {e}")
 
 
+def _find_or_create_aggregate(conn, selected_portfolios: list) -> int:
+    """Find an existing aggregate with exactly these members, or create one."""
+    member_ids = sorted(p["portfolio_id"] for p in selected_portfolios)
+    target = set(member_ids)
+
+    # Check existing aggregates that contain the first member
+    candidates = queries.get_aggregates_containing(conn, member_ids[0])
+    for agg in candidates:
+        members = queries.get_aggregate_members(conn, agg["portfolio_id"])
+        if {m["portfolio_id"] for m in members} == target:
+            return agg["portfolio_id"]
+
+    # None found — create one
+    name = " + ".join(p["name"] for p in selected_portfolios)
+    agg_id = queries.insert_portfolio(conn, name, is_aggregate=True)
+    for mid in member_ids:
+        queries.add_aggregate_member(conn, agg_id, mid)
+    conn.commit()
+    with st.spinner("Building combined snapshots..."):
+        _rebuild_aggregate_snapshots(conn, agg_id)
+    return agg_id
+
+
 def main():
     st.set_page_config(page_title="Performance", page_icon=":material/account_balance:", layout="wide")
     st.markdown("""<style>
@@ -234,16 +257,24 @@ def main():
 
     _import_section(conn)
 
-    # Portfolio selector
+    # Portfolio selector (multiselect — pick one or combine several)
     all_portfolios = queries.get_all_portfolios(conn)
-    if not all_portfolios:
+    individual_portfolios = [p for p in all_portfolios if not p["is_aggregate"]]
+    if not individual_portfolios:
         st.info("Upload a Vanguard CSV to get started.")
         return
 
-    portfolio_names = [p["name"] for p in all_portfolios]
-    selected_name = st.selectbox("Portfolio", portfolio_names, key="portfolio_view_select")
-    selected_portfolio = next(p for p in all_portfolios if p["name"] == selected_name)
-    portfolio_id = selected_portfolio["portfolio_id"]
+    ind_names = [p["name"] for p in individual_portfolios]
+    selected_names = st.multiselect("Portfolios", ind_names, key="portfolio_multi_select")
+    if not selected_names:
+        st.info("Select one or more portfolios above.")
+        return
+
+    selected = [p for p in individual_portfolios if p["name"] in selected_names]
+    if len(selected) == 1:
+        portfolio_id = selected[0]["portfolio_id"]
+    else:
+        portfolio_id = _find_or_create_aggregate(conn, selected)
 
     account_ids = queries.get_effective_account_ids(conn, portfolio_id)
     if not account_ids:
