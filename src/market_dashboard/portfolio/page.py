@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from market_dashboard.config import (
-    BENCHMARK_DEFS, CLASS_BASE_COLORS, CLASS_ORDER, DISPLAY_GROUPS,
+    CLASS_BASE_COLORS, CLASS_ORDER, DISPLAY_GROUPS,
     GROUPED_SYMS, SYMBOL_LABELS,
 )
 from market_dashboard.database.connection import get_app_connection
@@ -421,46 +421,56 @@ def main():
         ret_src["Return"] = (1 + ret_src["twr"]) / (1 + twr_base) - 1
         ret_src = ret_src.reset_index()
 
-        # Build benchmark return series (80/20 equity/cash)
-        bm_start = view_df.index[0].date()
-        bm_end = view_df.index[-1].date()
-        bm_syms = list({s for d in BENCHMARK_DEFS.values() for s in (d["equity"], d["bond"])})
-        for sym in bm_syms:
-            fetch_historical_prices(conn, sym, bm_start, bm_end)
-
         ret_long = ret_src.rename(columns={"Return": "value"})[["date", "value"]].copy()
         ret_long["Series"] = "Portfolio"
 
-        for bm_name, bm_info in BENCHMARK_DEFS.items():
-            eq_rows = queries.get_daily_prices(conn, bm_info["equity"], bm_start, bm_end)
-            bond_rows = queries.get_daily_prices(conn, bm_info["bond"], bm_start, bm_end)
-            if not eq_rows or not bond_rows:
-                continue
-            eq_s = pd.Series(
-                {pd.Timestamp(r["price_date"]): r["close"] for r in eq_rows}
-            ).sort_index()
+        eq_pct_options = [None] + list(range(10, 101, 10))
+        eq_pct = st.selectbox(
+            "Equity benchmark",
+            eq_pct_options,
+            format_func=lambda v: "None" if v is None else f"{v}% equity / {100 - v}% cash",
+            index=0,
+            key=f"eq_benchmark_{portfolio_id}",
+        )
+
+        _RET_COLORS = {"Portfolio": "#4a90d9"}
+
+        if eq_pct is not None:
+            eq_w = eq_pct / 100
+            bond_w = 1 - eq_w
+            bm_start = view_df.index[0].date()
+            bm_end = view_df.index[-1].date()
+            for sym in ("VOO", "ACWI", "VGSH"):
+                fetch_historical_prices(conn, sym, bm_start, bm_end)
+
+            bond_rows = queries.get_daily_prices(conn, "VGSH", bm_start, bm_end)
             bond_s = pd.Series(
                 {pd.Timestamp(r["price_date"]): r["close"] for r in bond_rows}
-            ).sort_index()
-            common = eq_s.index.intersection(bond_s.index)
-            if len(common) < 2:
-                continue
-            eq_ret = eq_s[common].pct_change().fillna(0)
-            bond_ret = bond_s[common].pct_change().fillna(0)
-            blended = 0.8 * eq_ret + 0.2 * bond_ret
-            cum_ret = (1 + blended).cumprod() - 1
-            bm_df = pd.DataFrame({
-                "date": common,
-                "value": cum_ret.values,
-                "Series": bm_name,
-            })
-            ret_long = pd.concat([ret_long, bm_df], ignore_index=True)
+            ).sort_index() if bond_rows else pd.Series(dtype=float)
 
-        _RET_COLORS = {
-            "Portfolio": "#4a90d9",
-            "80% S&P 500 / 20% Cash": "#a05a5a",
-            "80% ACWI / 20% Cash": "#5a8a5a",
-        }
+            for eq_sym, eq_label in (("VOO", "S&P 500"), ("ACWI", "ACWI")):
+                bm_name = f"{eq_pct}% {eq_label} / {100 - eq_pct}% Cash"
+                eq_rows = queries.get_daily_prices(conn, eq_sym, bm_start, bm_end)
+                if not eq_rows or bond_s.empty:
+                    continue
+                eq_s = pd.Series(
+                    {pd.Timestamp(r["price_date"]): r["close"] for r in eq_rows}
+                ).sort_index()
+                common = eq_s.index.intersection(bond_s.index)
+                if len(common) < 2:
+                    continue
+                eq_ret = eq_s[common].pct_change().fillna(0)
+                bond_ret = bond_s[common].pct_change().fillna(0)
+                blended = eq_w * eq_ret + bond_w * bond_ret
+                cum_ret = (1 + blended).cumprod() - 1
+                bm_df = pd.DataFrame({
+                    "date": common,
+                    "value": cum_ret.values,
+                    "Series": bm_name,
+                })
+                ret_long = pd.concat([ret_long, bm_df], ignore_index=True)
+                _RET_COLORS[bm_name] = "#a05a5a" if eq_sym == "VOO" else "#5a8a5a"
+
         _series_order = [s for s in _RET_COLORS if s in ret_long["Series"].unique()]
         ret_chart = (
             alt.Chart(ret_long).mark_line().encode(

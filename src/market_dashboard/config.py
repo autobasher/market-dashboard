@@ -120,12 +120,6 @@ CLASS_BASE_COLORS: dict[str, tuple[int, int, int]] = {
     "Cash": (40, 170, 70),
 }
 
-BENCHMARK_DEFS: dict[str, dict[str, str]] = {
-    "80% S&P 500 / 20% Cash": {"equity": "VOO", "bond": "VGSH"},
-    "80% ACWI / 20% Cash": {"equity": "ACWI", "bond": "VGSH"},
-}
-
-
 @dataclass(frozen=True)
 class Settings:
     db_path: Path = field(default_factory=lambda: Path(os.environ.get(
