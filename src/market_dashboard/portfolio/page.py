@@ -573,11 +573,26 @@ def main():
                     continue
                 eq_ret = eq_s[common].pct_change().fillna(0)
                 bond_ret = bond_s[common].pct_change().fillna(0)
-                blended = eq_w * eq_ret + bond_w * bond_ret
-                cum_ret = (1 + blended).cumprod() - 1
+
+                # Simulate portfolio with quarterly rebalancing
+                eq_portion = eq_w
+                bond_portion = bond_w
+                cum_ret_vals = []
+                prev_quarter = None
+                for dt, er, br in zip(common, eq_ret, bond_ret):
+                    quarter = (dt.year, (dt.month - 1) // 3)
+                    if prev_quarter is not None and quarter != prev_quarter:
+                        total = eq_portion + bond_portion
+                        eq_portion = total * eq_w
+                        bond_portion = total * bond_w
+                    eq_portion *= (1 + er)
+                    bond_portion *= (1 + br)
+                    cum_ret_vals.append(eq_portion + bond_portion - 1)
+                    prev_quarter = quarter
+
                 bm_df = pd.DataFrame({
                     "date": common,
-                    "value": cum_ret.values,
+                    "value": cum_ret_vals,
                     "Series": bm_name,
                 })
                 ret_long = pd.concat([ret_long, bm_df], ignore_index=True)
