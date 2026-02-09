@@ -136,6 +136,34 @@ def ensure_splits_for_portfolio(
     return count
 
 
+def fetch_live_prices(symbols: list[str]) -> dict[str, float]:
+    """Fetch current quotes from yfinance for intraday portfolio valuation.
+
+    During market hours, returns the latest traded price.
+    After hours, returns the most recent closing price.
+    VMFXX is hardcoded to $1.00 (money market).
+    """
+    if not symbols:
+        return {}
+
+    prices: dict[str, float] = {}
+    # VMFXX is always $1.00
+    non_cash = [s for s in symbols if s != "VMFXX"]
+    if "VMFXX" in symbols:
+        prices["VMFXX"] = 1.0
+
+    for sym in non_cash:
+        try:
+            info = yf.Ticker(sym).fast_info
+            price = info.get("lastPrice") or info.get("last_price")
+            if price and price > 0:
+                prices[sym] = float(price)
+        except Exception:
+            logger.warning("Failed to fetch live price for %s", sym)
+
+    return prices
+
+
 def ensure_prices_for_portfolio(
     conn: sqlite3.Connection,
     symbols: list[str],

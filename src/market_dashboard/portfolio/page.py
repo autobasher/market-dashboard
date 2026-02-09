@@ -20,7 +20,7 @@ from market_dashboard.portfolio import queries
 from market_dashboard.portfolio.parsers import parse_vanguard_csv
 from market_dashboard.portfolio.pdf_parser import pdf_to_csv_rows
 from market_dashboard.portfolio.fifo import rebuild_lots
-from market_dashboard.portfolio.prices import ensure_prices_for_portfolio, ensure_splits_for_portfolio, fetch_historical_prices
+from market_dashboard.portfolio.prices import ensure_prices_for_portfolio, ensure_splits_for_portfolio, fetch_historical_prices, fetch_live_prices
 from market_dashboard.portfolio.snapshots import build_daily_snapshots
 from market_dashboard.portfolio import metrics
 
@@ -284,72 +284,94 @@ def main():
         "10Y": relativedelta(years=10),
         "All": None,
     }
-    st.metric("Portfolio Value", f"${portfolio_value:,.2f}")
     period = st.pills("Period", list(PERIODS.keys()), default="All")
 
-    # Compute period start date
-    if period == "All" or period is None:
-        period_start = None
-    elif period == "YTD":
-        period_start = pd.Timestamp(date(today.year, 1, 1))
-    else:
-        period_start = pd.Timestamp(today - PERIODS[period])
-
-    # Filter snapshots to period
-    if not snap_df.empty and period_start is not None:
-        view_df = snap_df[snap_df.index >= period_start]
-    else:
-        view_df = snap_df
-
-    # Compute metrics for the selected period
-    if not view_df.empty and len(view_df) > 1:
-        # TWR for sub-period: (1 + twr_end) / (1 + twr_start) - 1
-        twr_end = float(view_df["twr"].iloc[-1])
-        # Use the snapshot just before the period for the base
-        if period_start is not None and not snap_df.empty:
-            before = snap_df[snap_df.index < period_start]
-            twr_base = float(before["twr"].iloc[-1]) if not before.empty else 0.0
+    # --- 1D intraday mode ---
+    is_intraday = period == "1D"
+    if is_intraday:
+        live_prices = fetch_live_prices(symbols)
+        live_value = cash_balance + sum(
+            lot["shares_remaining"] * live_prices.get(lot["symbol"], current_prices.get(lot["symbol"], 0.0))
+            for lot in open_lots
+            if lot["shares_remaining"] > 0
+        )
+        # Previous close = latest snapshot's total_value
+        prev_close_value = float(snap_df["total_value"].iloc[-1]) if not snap_df.empty else None
+        if prev_close_value and prev_close_value > 0:
+            day_return = live_value / prev_close_value - 1
+            day_change = live_value - prev_close_value
         else:
-            twr_base = 0.0
-        total_ret = (1 + twr_end) / (1 + twr_base) - 1
-
-        # CAGR: annualized TWR for the period
-        n_days = (view_df.index[-1] - view_df.index[0]).days
-        if n_days > 365:
-            cagr = (1 + total_ret) ** (365.25 / n_days) - 1
-        else:
-            cagr = None  # annualizing < 1 year is misleading
-
-        # XIRR for sub-period: starting value as initial investment + flows + ending value
-        period_snaps = [s for s in snapshots if s["snap_date"] >= (period_start or pd.Timestamp.min).strftime("%Y-%m-%d")]
-        if period_start is not None and not before.empty:
-            start_value = float(before["total_value"].iloc[-1])
-            start_date = before.index[-1].date()
-            xirr_val = metrics.portfolio_xirr(period_snaps, portfolio_value, today, start_value, start_date)
-        else:
-            xirr_val = metrics.portfolio_xirr(period_snaps, portfolio_value, today)
-
-        # Daily returns for risk metrics
-        daily_returns = view_df["twr_growth"].pct_change().dropna()
-        sharpe = metrics.sharpe_ratio(daily_returns) if len(daily_returns) > 1 else None
-        mdd = metrics.max_drawdown(daily_returns) if len(daily_returns) > 1 else None
-        vol = metrics.annual_volatility(daily_returns) if len(daily_returns) > 1 else None
-    elif not view_df.empty and len(view_df) == 1:
-        total_ret = cagr = xirr_val = sharpe = mdd = vol = None
+            day_return = day_change = None
+        st.metric("Portfolio Value", f"${live_value:,.2f}")
+        m1, m2 = st.columns(2)
+        m1.metric("Day Return", f"{day_return:.2%}" if day_return is not None else "—")
+        m2.metric("Day Change", f"${day_change:+,.2f}" if day_change is not None else "—")
     else:
-        total_ret = xirr_val = sharpe = mdd = vol = cagr = None
+        st.metric("Portfolio Value", f"${portfolio_value:,.2f}")
 
-    # --- Metrics ---
-    m1, m2, m3, m4, m5, m6 = st.columns([2, 2.5, 3, 3, 1.5, 1.5])
-    m1.metric("Total return (TWR)", f"{total_ret:.1%}" if total_ret is not None else "—")
-    m2.metric("Return, per year (CAGR)", f"{cagr:.1%}" if cagr is not None else "—")
-    m3.metric("Money return, per year (XIRR)", f"{xirr_val:.1%}" if xirr_val is not None else "—")
-    m4.metric("Risk-to-reward (Sharpe ratio)", f"{sharpe:.2f}" if sharpe is not None else "—")
-    m5.metric("Max drawdown", f"{mdd:.1%}" if mdd is not None else "—")
-    m6.metric("Volatility", f"{vol:.1%}" if vol is not None else "—")
+        # Compute period start date
+        if period == "All" or period is None:
+            period_start = None
+        elif period == "YTD":
+            period_start = pd.Timestamp(date(today.year, 1, 1))
+        else:
+            period_start = pd.Timestamp(today - PERIODS[period])
+
+        # Filter snapshots to period
+        if not snap_df.empty and period_start is not None:
+            view_df = snap_df[snap_df.index >= period_start]
+        else:
+            view_df = snap_df
+
+        # Compute metrics for the selected period
+        if not view_df.empty and len(view_df) > 1:
+            # TWR for sub-period: (1 + twr_end) / (1 + twr_start) - 1
+            twr_end = float(view_df["twr"].iloc[-1])
+            # Use the snapshot just before the period for the base
+            if period_start is not None and not snap_df.empty:
+                before = snap_df[snap_df.index < period_start]
+                twr_base = float(before["twr"].iloc[-1]) if not before.empty else 0.0
+            else:
+                twr_base = 0.0
+            total_ret = (1 + twr_end) / (1 + twr_base) - 1
+
+            # CAGR: annualized TWR for the period
+            n_days = (view_df.index[-1] - view_df.index[0]).days
+            if n_days > 365:
+                cagr = (1 + total_ret) ** (365.25 / n_days) - 1
+            else:
+                cagr = None  # annualizing < 1 year is misleading
+
+            # XIRR for sub-period: starting value as initial investment + flows + ending value
+            period_snaps = [s for s in snapshots if s["snap_date"] >= (period_start or pd.Timestamp.min).strftime("%Y-%m-%d")]
+            if period_start is not None and not before.empty:
+                start_value = float(before["total_value"].iloc[-1])
+                start_date = before.index[-1].date()
+                xirr_val = metrics.portfolio_xirr(period_snaps, portfolio_value, today, start_value, start_date)
+            else:
+                xirr_val = metrics.portfolio_xirr(period_snaps, portfolio_value, today)
+
+            # Daily returns for risk metrics
+            daily_returns = view_df["twr_growth"].pct_change().dropna()
+            sharpe = metrics.sharpe_ratio(daily_returns) if len(daily_returns) > 1 else None
+            mdd = metrics.max_drawdown(daily_returns) if len(daily_returns) > 1 else None
+            vol = metrics.annual_volatility(daily_returns) if len(daily_returns) > 1 else None
+        elif not view_df.empty and len(view_df) == 1:
+            total_ret = cagr = xirr_val = sharpe = mdd = vol = None
+        else:
+            total_ret = xirr_val = sharpe = mdd = vol = cagr = None
+
+        # --- Metrics ---
+        m1, m2, m3, m4, m5, m6 = st.columns([2, 2.5, 3, 3, 1.5, 1.5])
+        m1.metric("Total return (TWR)", f"{total_ret:.1%}" if total_ret is not None else "—")
+        m2.metric("Return, per year (CAGR)", f"{cagr:.1%}" if cagr is not None else "—")
+        m3.metric("Money return, per year (XIRR)", f"{xirr_val:.1%}" if xirr_val is not None else "—")
+        m4.metric("Risk-to-reward (Sharpe ratio)", f"{sharpe:.2f}" if sharpe is not None else "—")
+        m5.metric("Max drawdown", f"{mdd:.1%}" if mdd is not None else "—")
+        m6.metric("Volatility", f"{vol:.1%}" if vol is not None else "—")
 
     # --- Charts ---
-    if not view_df.empty:
+    if not is_intraday and not view_df.empty:
         dollar_fmt = "$,.0f"
         span_days = (view_df.index[-1] - view_df.index[0]).days
         x_fmt = "%b %Y" if span_days > 180 else "%b %d"
