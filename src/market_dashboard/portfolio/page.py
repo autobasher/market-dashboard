@@ -31,35 +31,44 @@ def _symbols_from_lots(lots) -> list[str]:
     return list({lot["symbol"] for lot in lots})
 
 
-def _wipe_portfolio_data(conn):
-    """Delete all portfolio-related data for a clean re-import."""
-    conn.execute("DELETE FROM portfolio_snapshots")
-    conn.execute("DELETE FROM lot_disposals")
-    conn.execute("DELETE FROM lots")
-    conn.execute("DELETE FROM transactions")
-    conn.execute("DELETE FROM portfolio_accounts")
-    conn.execute("DELETE FROM portfolios")
-    conn.execute("DELETE FROM accounts")
+def _wipe_account_data(conn, account_id: str, portfolio_id: int):
+    """Delete data for a single account/portfolio, leaving others intact."""
+    conn.execute("DELETE FROM portfolio_snapshots WHERE portfolio_id = ?", (portfolio_id,))
+    # Delete lot disposals for lots in this account
+    conn.execute(
+        "DELETE FROM lot_disposals WHERE lot_id IN "
+        "(SELECT lot_id FROM lots WHERE account_id = ?)", (account_id,)
+    )
+    conn.execute("DELETE FROM lots WHERE account_id = ?", (account_id,))
+    conn.execute("DELETE FROM transactions WHERE account_id = ?", (account_id,))
 
 
 def _store_csv(conn, filename: str, content: bytes, account_id: str, account_name: str, cash_balance: float = 0.0):
     conn.execute(
-        "INSERT OR REPLACE INTO uploaded_csv (id, filename, content, account_id, account_name, cash_balance) "
-        "VALUES (1, ?, ?, ?, ?, ?)",
-        (filename, content, account_id, account_name, cash_balance),
+        "INSERT OR REPLACE INTO uploaded_csv (account_id, filename, content, account_name, cash_balance) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (account_id, filename, content, account_name, cash_balance),
     )
 
 
-def _do_import(conn, csv_text: str, account_id: str, account_name: str):
-    """Parse CSV, wipe old data, and rebuild everything from scratch."""
+def _do_import(conn, csv_text: str, portfolio_name: str):
+    """Parse CSV, wipe old data for this portfolio, and rebuild."""
+    account_id = portfolio_name.lower().replace(" ", "-")
+
     txs = parse_vanguard_csv(io.StringIO(csv_text), account_id)
     if not txs:
         st.warning("No transactions found in CSV.")
         return
 
-    _wipe_portfolio_data(conn)
-
-    queries.insert_account(conn, account_id, account_name or account_id, "Vanguard")
+    # Find or create portfolio + account
+    existing = queries.get_portfolio_by_name(conn, portfolio_name)
+    if existing:
+        portfolio_id = existing["portfolio_id"]
+        _wipe_account_data(conn, account_id, portfolio_id)
+    else:
+        queries.insert_account(conn, account_id, portfolio_name, "Vanguard")
+        portfolio_id = queries.insert_portfolio(conn, portfolio_name)
+        queries.add_account_to_portfolio(conn, portfolio_id, account_id)
 
     for tx in txs:
         queries.insert_transaction(
@@ -90,9 +99,6 @@ def _do_import(conn, csv_text: str, account_id: str, account_name: str):
 
     rebuild_lots(conn, account_id)
 
-    portfolio_id = queries.insert_portfolio(conn, "My Portfolio")
-    queries.add_account_to_portfolio(conn, portfolio_id, account_id)
-
     if all_symbols:
         with st.spinner("Fetching prices..."):
             ensure_prices_for_portfolio(conn, all_symbols, earliest, today)
@@ -100,9 +106,25 @@ def _do_import(conn, csv_text: str, account_id: str, account_name: str):
         with st.spinner("Building snapshots..."):
             build_daily_snapshots(conn, portfolio_id, earliest, today)
 
+    # Rebuild snapshots for any aggregates containing this portfolio
+    aggregates = queries.get_aggregates_containing(conn, portfolio_id)
+    for agg in aggregates:
+        _rebuild_aggregate_snapshots(conn, agg["portfolio_id"])
+
     conn.commit()
-    st.success(f"Imported {len(txs)} transactions.")
+    st.success(f"Imported {len(txs)} transactions into '{portfolio_name}'.")
     st.rerun()
+
+
+def _rebuild_aggregate_snapshots(conn, aggregate_id: int):
+    """Rebuild snapshots for an aggregate portfolio from its members' accounts."""
+    members = queries.get_aggregate_members(conn, aggregate_id)
+    # Sync portfolio_accounts for the aggregate
+    conn.execute("DELETE FROM portfolio_accounts WHERE portfolio_id = ?", (aggregate_id,))
+    for m in members:
+        for acct in queries.get_portfolio_accounts(conn, m["portfolio_id"]):
+            queries.add_account_to_portfolio(conn, aggregate_id, acct["account_id"])
+    build_daily_snapshots(conn, aggregate_id)
 
 
 def _pdf_to_csv_text(pdf_bytes: bytes) -> str:
@@ -130,9 +152,23 @@ def _pdf_to_csv_text(pdf_bytes: bytes) -> str:
 
 
 def _import_section(conn):
-    stored = queries.get_stored_csv(conn)
+    all_portfolios = queries.get_all_portfolios(conn)
+    individual_portfolios = [p for p in all_portfolios if not p["is_aggregate"]]
+    has_data = len(individual_portfolios) > 0
 
-    with st.expander("Import Transactions", expanded=stored is None):
+    with st.expander("Import Transactions", expanded=not has_data):
+        # Portfolio selector
+        portfolio_options = [p["name"] for p in individual_portfolios] + ["+ New portfolio..."]
+        selected = st.selectbox("Portfolio", portfolio_options, key="import_portfolio_select")
+
+        if selected == "+ New portfolio...":
+            portfolio_name = st.text_input("New portfolio name", placeholder="e.g. Ariel2")
+        else:
+            portfolio_name = selected
+
+        # Show current file info if existing portfolio
+        account_id = portfolio_name.lower().replace(" ", "-") if portfolio_name else ""
+        stored = queries.get_stored_csv(conn, account_id) if account_id else None
         if stored:
             col_info, col_dl = st.columns([3, 1])
             col_info.caption(f"Current file: **{stored['filename']}** (uploaded {stored['uploaded_at']})")
@@ -142,17 +178,11 @@ def _import_section(conn):
                 file_name=stored["filename"],
                 mime="text/csv",
             )
-            st.divider()
-            st.caption("Upload a new file to replace the current data.")
+
+        default_cash = stored["cash_balance"] if stored else 0.0
+        cash_balance = st.number_input("Cash Balance (VMFXX)", value=float(default_cash), min_value=0.0, step=0.01, format="%.2f")
 
         uploaded = st.file_uploader("Upload Vanguard CSV or PDF", type=["csv", "pdf"])
-        col1, col2, col3 = st.columns(3)
-        default_acct = stored["account_id"] if stored else ""
-        default_name = stored["account_name"] if stored else ""
-        default_cash = stored["cash_balance"] if stored else 0.0
-        account_id = col1.text_input("Account ID", value=default_acct, placeholder="e.g. 12345678")
-        account_name = col2.text_input("Account Name", value=default_name, placeholder="e.g. Vanguard Brokerage")
-        cash_balance = col3.number_input("Cash Balance (VMFXX)", value=float(default_cash), min_value=0.0, step=0.01, format="%.2f")
 
         # PDF preview: convert and show before import
         csv_text = None
@@ -170,17 +200,18 @@ def _import_section(conn):
             else:
                 csv_text = raw_bytes.decode("utf-8")
 
-        if st.button("Import", disabled=not uploaded or not account_id or not csv_text):
-            if not csv_text or not account_id:
+        can_import = uploaded and portfolio_name and csv_text
+        if st.button("Import", disabled=not can_import):
+            if not csv_text or not portfolio_name:
                 return
             try:
                 csv_bytes = csv_text.encode("utf-8")
                 csv_filename = uploaded.name.rsplit(".", 1)[0] + ".csv" if uploaded.name.lower().endswith(".pdf") else uploaded.name
 
-                _store_csv(conn, csv_filename, csv_bytes, account_id, account_name or account_id, cash_balance)
+                _store_csv(conn, csv_filename, csv_bytes, account_id, portfolio_name, cash_balance)
                 conn.commit()
 
-                _do_import(conn, csv_text, account_id, account_name)
+                _do_import(conn, csv_text, portfolio_name)
 
             except Exception as e:
                 st.error(f"Import failed: {e}")
@@ -203,20 +234,27 @@ def main():
 
     _import_section(conn)
 
-    # Check if any accounts exist
-    account_ids = queries.get_all_account_ids(conn)
-    if not account_ids:
+    # Portfolio selector
+    all_portfolios = queries.get_all_portfolios(conn)
+    if not all_portfolios:
         st.info("Upload a Vanguard CSV to get started.")
         return
 
-    portfolio_id = queries.get_default_portfolio_id(conn)
-    if portfolio_id is None:
-        st.info("No portfolio found. Import transactions first.")
+    portfolio_names = [p["name"] for p in all_portfolios]
+    selected_name = st.selectbox("Portfolio", portfolio_names, key="portfolio_view_select")
+    selected_portfolio = next(p for p in all_portfolios if p["name"] == selected_name)
+    portfolio_id = selected_portfolio["portfolio_id"]
+
+    account_ids = queries.get_effective_account_ids(conn, portfolio_id)
+    if not account_ids:
+        st.info("No accounts linked to this portfolio.")
         return
 
-    # Gather data
-    stored = queries.get_stored_csv(conn)
-    cash_balance = stored["cash_balance"] if stored else 0.0
+    # Cash balance: sum across all accounts' stored CSVs
+    cash_balance = sum(
+        (queries.get_stored_csv(conn, aid) or {}).get("cash_balance", 0.0)
+        for aid in account_ids
+    )
 
     open_lots = queries.get_all_open_lots(conn, account_ids)
     symbols = _symbols_from_lots(open_lots)

@@ -28,9 +28,33 @@ def get_account(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row | None
 
 # --- Portfolios ---
 
-def insert_portfolio(conn: sqlite3.Connection, name: str) -> int:
-    cur = conn.execute("INSERT INTO portfolios (name) VALUES (?)", (name,))
+def get_all_portfolios(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM portfolios ORDER BY is_aggregate, name"
+    ).fetchall()
+
+
+def get_portfolio_by_name(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM portfolios WHERE name = ?", (name,)
+    ).fetchone()
+
+
+def insert_portfolio(conn: sqlite3.Connection, name: str, is_aggregate: bool = False) -> int:
+    cur = conn.execute(
+        "INSERT INTO portfolios (name, is_aggregate) VALUES (?, ?)",
+        (name, int(is_aggregate)),
+    )
     return cur.lastrowid
+
+
+def delete_portfolio(conn: sqlite3.Connection, portfolio_id: int) -> None:
+    """Delete a portfolio and all its associated data."""
+    conn.execute("DELETE FROM portfolio_snapshots WHERE portfolio_id = ?", (portfolio_id,))
+    conn.execute("DELETE FROM portfolio_accounts WHERE portfolio_id = ?", (portfolio_id,))
+    conn.execute("DELETE FROM aggregate_members WHERE aggregate_id = ?", (portfolio_id,))
+    conn.execute("DELETE FROM aggregate_members WHERE member_id = ?", (portfolio_id,))
+    conn.execute("DELETE FROM portfolios WHERE portfolio_id = ?", (portfolio_id,))
 
 
 def add_account_to_portfolio(
@@ -51,6 +75,63 @@ def get_portfolio_accounts(
         "WHERE pa.portfolio_id = ?",
         (portfolio_id,),
     ).fetchall()
+
+
+# --- Aggregate Members ---
+
+def add_aggregate_member(
+    conn: sqlite3.Connection, aggregate_id: int, member_id: int
+) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO aggregate_members (aggregate_id, member_id) VALUES (?, ?)",
+        (aggregate_id, member_id),
+    )
+
+
+def get_aggregate_members(
+    conn: sqlite3.Connection, aggregate_id: int
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT p.* FROM portfolios p "
+        "JOIN aggregate_members am ON p.portfolio_id = am.member_id "
+        "WHERE am.aggregate_id = ?",
+        (aggregate_id,),
+    ).fetchall()
+
+
+def get_aggregates_containing(
+    conn: sqlite3.Connection, member_id: int
+) -> list[sqlite3.Row]:
+    """Find aggregate portfolios that include a given member portfolio."""
+    return conn.execute(
+        "SELECT p.* FROM portfolios p "
+        "JOIN aggregate_members am ON p.portfolio_id = am.aggregate_id "
+        "WHERE am.member_id = ?",
+        (member_id,),
+    ).fetchall()
+
+
+def get_effective_account_ids(
+    conn: sqlite3.Connection, portfolio_id: int
+) -> list[str]:
+    """Resolve account IDs for a portfolio (individual or aggregate)."""
+    row = conn.execute(
+        "SELECT is_aggregate FROM portfolios WHERE portfolio_id = ?", (portfolio_id,)
+    ).fetchone()
+    if not row:
+        return []
+
+    if row["is_aggregate"]:
+        # Collect accounts from all member portfolios
+        members = get_aggregate_members(conn, portfolio_id)
+        account_ids = []
+        for m in members:
+            accts = get_portfolio_accounts(conn, m["portfolio_id"])
+            account_ids.extend(a["account_id"] for a in accts)
+        return list(dict.fromkeys(account_ids))  # dedupe preserving order
+    else:
+        accts = get_portfolio_accounts(conn, portfolio_id)
+        return [a["account_id"] for a in accts]
 
 
 # --- Transactions ---
@@ -385,9 +466,16 @@ def get_all_account_ids(conn: sqlite3.Connection) -> list[str]:
     return [r["account_id"] for r in rows]
 
 
-def get_stored_csv(conn: sqlite3.Connection) -> dict | None:
-    row = conn.execute("SELECT * FROM uploaded_csv WHERE id = 1").fetchone()
+def get_stored_csv(conn: sqlite3.Connection, account_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM uploaded_csv WHERE account_id = ?", (account_id,)
+    ).fetchone()
     return dict(row) if row else None
+
+
+def get_all_stored_csvs(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("SELECT * FROM uploaded_csv").fetchall()
+    return [dict(r) for r in rows]
 
 
 # --- Lot Rebuild ---

@@ -17,9 +17,8 @@ from market_dashboard.portfolio.models import TxType
 _TX_TYPE_OPTIONS = [t.value for t in TxType]
 
 
-def _render_transaction_table(conn):
-    """Render the full transaction table with filters."""
-    account_ids = queries.get_all_account_ids(conn)
+def _render_transaction_table(conn, account_ids: list[str]):
+    """Render the transaction table for given accounts with filters."""
     if not account_ids:
         st.info("No transactions. Import data on the Portfolio page first.")
         return
@@ -110,10 +109,9 @@ def _edit_section(conn, df):
     return False
 
 
-def _add_section(conn):
+def _add_section(conn, account_ids: list[str]):
     """Add a new transaction manually."""
     st.subheader("Add Transaction")
-    account_ids = queries.get_all_account_ids(conn)
     if not account_ids:
         st.warning("No accounts exist. Import data first.")
         return False
@@ -176,10 +174,8 @@ def _delete_section(conn, df):
     return False
 
 
-def _rebuild_section(conn):
-    """Rebuild lots and snapshots after edits."""
-    account_ids = queries.get_all_account_ids(conn)
-    portfolio_id = queries.get_default_portfolio_id(conn)
+def _rebuild_section(conn, portfolio_id: int, account_ids: list[str]):
+    """Rebuild lots and snapshots for the selected portfolio."""
     if not account_ids or not portfolio_id:
         return
 
@@ -189,6 +185,12 @@ def _rebuild_section(conn):
                 rebuild_lots(conn, acct_id)
         with st.spinner("Rebuilding snapshots..."):
             build_daily_snapshots(conn, portfolio_id)
+
+        # Also rebuild aggregates containing this portfolio
+        aggregates = queries.get_aggregates_containing(conn, portfolio_id)
+        for agg in aggregates:
+            with st.spinner(f"Rebuilding aggregate '{agg['name']}'..."):
+                build_daily_snapshots(conn, agg["portfolio_id"])
 
         conn.commit()
         st.success("Portfolio rebuilt successfully.")
@@ -201,7 +203,19 @@ def main():
 
     conn = get_app_connection()
 
-    df = _render_transaction_table(conn)
+    # Portfolio selector
+    all_portfolios = queries.get_all_portfolios(conn)
+    if not all_portfolios:
+        st.info("No portfolios. Import data on the Portfolio page first.")
+        return
+
+    portfolio_names = [p["name"] for p in all_portfolios]
+    selected_name = st.selectbox("Portfolio", portfolio_names, key="tx_portfolio_select")
+    selected_portfolio = next(p for p in all_portfolios if p["name"] == selected_name)
+    portfolio_id = selected_portfolio["portfolio_id"]
+    account_ids = queries.get_effective_account_ids(conn, portfolio_id)
+
+    df = _render_transaction_table(conn, account_ids)
     if df is None or df.empty:
         return
 
@@ -215,7 +229,7 @@ def main():
             changed = True
 
     with tab_add:
-        if _add_section(conn):
+        if _add_section(conn, account_ids):
             changed = True
 
     with tab_delete:
@@ -227,4 +241,4 @@ def main():
     if changed:
         st.warning("Transactions were modified. Rebuild the portfolio to update lots and snapshots.")
 
-    _rebuild_section(conn)
+    _rebuild_section(conn, portfolio_id, account_ids)

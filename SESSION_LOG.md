@@ -99,3 +99,7 @@ Goal: Dead code removal, extract shared helpers, move config/SQL to proper layer
 8. **Enable foreign keys**: Added `PRAGMA foreign_keys = ON` to `get_connection()`.
 
 Final state: 74 tests passing, 0 failing. 8 commits.
+
+## 2026-02-09 Session started — Multi-portfolio support
+
+Goal: Named persistent portfolios, scoped imports, aggregate portfolios, management page. 8 phases planned.

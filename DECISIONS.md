@@ -29,3 +29,10 @@ Format: Date, context, alternatives considered, choice, rationale, impact.
 - **Choice**: (b) — explicit sweep tracking
 - **Rationale**: Cash balance is a first-class number in portfolio accounting. Estimation would compound errors.
 - **Impact**: Migration script inserted 750 sweep transactions, fixed VMMXX→VMRXX conversion. Cash validated at $848.63 (exact match to Excel).
+
+## [2026-02-09] Multi-portfolio support with aggregates
+- **Context**: Dashboard assumed a single portfolio. Each CSV import wiped all data globally. Need named persistent portfolios that survive re-imports, plus aggregate portfolios for combined views.
+- **Alternatives**: (a) Keep single portfolio with multi-account support only, (b) Full multi-portfolio with individual + aggregate types
+- **Choice**: (b) — full multi-portfolio with `is_aggregate` flag and `aggregate_members` junction table
+- **Rationale**: Ariel has multiple Vanguard accounts. Aggregates let him view combined performance without reimporting. `aggregate_members` links portfolios (not accounts directly) so membership is stable across re-imports.
+- **Impact**: Schema changes (new column, new table, uploaded_csv migration), ~10 new query functions, scoped import replaces global wipe, portfolio selector on all pages, new Portfolios management page.
