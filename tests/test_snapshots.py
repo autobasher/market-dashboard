@@ -48,14 +48,14 @@ def test_snapshot_with_transactions(portfolio_db):
     df = build_daily_snapshots(conn, pid, date(2024, 1, 2), date(2024, 1, 3))
     assert len(df) == 2
 
-    # Day 1: cash = -1000, value = 10 * 100 + (-1000) = 0
-    # (cash_balance includes the buy outflow)
+    # Cash model tracks VMFXX settlement fund balance from sweeps only.
+    # A bare BUY without corresponding SWEEP_OUT doesn't change cash_balance.
     row0 = df.iloc[0]
-    assert row0["cash_balance"] == pytest.approx(-1000.0)
+    assert row0["cash_balance"] == pytest.approx(0.0)
 
-    # Day 2: price went up, value = 10 * 105 + (-1000) = 50
+    # Day 2: equity only (no cash component), value = 10 * 105
     row1 = df.iloc[1]
-    assert row1["total_value"] == pytest.approx(10 * 105.0 + (-1000.0))
+    assert row1["total_value"] == pytest.approx(10 * 105.0)
 
 
 def test_snapshots_cached(portfolio_db):

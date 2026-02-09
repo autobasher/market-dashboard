@@ -20,8 +20,8 @@ Trade Date,Settlement Date,Transaction Type,Transaction Description,Symbol,Share
 
 def test_parse_vanguard_basic():
     txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
-    # Sweep row should be skipped, Exchange produces 2 rows -> 8 total
-    assert len(txs) == 8
+    # Sweep row now included, Exchange produces 2 rows -> 9 total
+    assert len(txs) == 9
 
 
 def test_parse_vanguard_tx_types():
@@ -32,8 +32,9 @@ def test_parse_vanguard_tx_types():
         TxType.SELL,
         TxType.DIVIDEND,
         TxType.DRIP,
-        TxType.SELL,       # Exchange sell VEA
-        TxType.BUY,        # Exchange buy VWO
+        TxType.SWEEP_IN,   # Sweep in now included
+        TxType.SELL,        # Exchange sell VEA
+        TxType.TRANSFER_IN, # Exchange buy VWO (positive shares)
         TxType.FEE,
         TxType.TRANSFER_IN,
     ]
@@ -62,21 +63,21 @@ def test_parse_vanguard_amounts():
 
 def test_parse_vanguard_exchange_splitting():
     txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
-    exchange_sell = txs[4]
-    exchange_buy = txs[5]
+    exchange_sell = txs[5]   # shifted by 1 due to sweep inclusion
+    exchange_buy = txs[6]
 
     assert exchange_sell.tx_type == TxType.SELL
     assert exchange_sell.symbol == "VEA"
     assert exchange_sell.shares == 10.0
 
-    assert exchange_buy.tx_type == TxType.BUY
+    assert exchange_buy.tx_type == TxType.TRANSFER_IN  # positive shares -> TRANSFER_IN
     assert exchange_buy.symbol == "VWO"
     assert exchange_buy.shares == 20.0
 
 
 def test_parse_vanguard_fee():
     txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
-    fee = txs[6]
+    fee = txs[7]  # shifted by 1 due to sweep inclusion
     assert fee.tx_type == TxType.FEE
     assert fee.symbol is None
     assert fee.total_amount == -25.00

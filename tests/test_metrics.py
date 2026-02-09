@@ -21,30 +21,31 @@ from market_dashboard.portfolio.metrics import (
 
 def test_xirr_simple():
     """Invest $1000 Jan 1, worth $1100 Dec 31 -> ~10% IRR."""
-    txs = [
-        {"trade_date": date(2024, 1, 1), "total_amount": -1000.0, "tx_type": "BUY"},
+    snapshots = [
+        {"snap_date": "2024-01-01", "total_cost": 1000.0},
     ]
-    result = portfolio_xirr(txs, 1100.0, date(2024, 12, 31))
+    result = portfolio_xirr(snapshots, 1100.0, date(2024, 12, 31))
     assert result is not None
     assert result == pytest.approx(0.10, abs=0.02)
 
 
 def test_xirr_multiple_flows():
-    txs = [
-        {"trade_date": date(2024, 1, 1), "total_amount": -1000.0, "tx_type": "BUY"},
-        {"trade_date": date(2024, 7, 1), "total_amount": -500.0, "tx_type": "BUY"},
+    snapshots = [
+        {"snap_date": "2024-01-01", "total_cost": 1000.0},
+        {"snap_date": "2024-07-01", "total_cost": 1500.0},
     ]
-    result = portfolio_xirr(txs, 1600.0, date(2024, 12, 31))
+    result = portfolio_xirr(snapshots, 1600.0, date(2024, 12, 31))
     assert result is not None
     assert result > 0  # should be positive return
 
 
-def test_xirr_skips_splits():
-    txs = [
-        {"trade_date": date(2024, 1, 1), "total_amount": -1000.0, "tx_type": "BUY"},
-        {"trade_date": date(2024, 6, 1), "total_amount": 0.0, "tx_type": "SPLIT"},
+def test_xirr_skips_zero_deltas():
+    """Snapshots with no change in total_cost produce no extra cash flows."""
+    snapshots = [
+        {"snap_date": "2024-01-01", "total_cost": 1000.0},
+        {"snap_date": "2024-06-01", "total_cost": 1000.0},
     ]
-    result = portfolio_xirr(txs, 1100.0, date(2024, 12, 31))
+    result = portfolio_xirr(snapshots, 1100.0, date(2024, 12, 31))
     assert result is not None
 
 
