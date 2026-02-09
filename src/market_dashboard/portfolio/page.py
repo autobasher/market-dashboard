@@ -117,14 +117,70 @@ def _do_import(conn, csv_text: str, portfolio_name: str):
 
 
 def _rebuild_aggregate_snapshots(conn, aggregate_id: int):
-    """Rebuild snapshots for an aggregate portfolio from its members' accounts."""
+    """Rebuild aggregate snapshots by summing member portfolio snapshots.
+
+    For each date, sums total_value/total_cost/cash_balance across members,
+    then chains TWR from the combined daily returns.
+    """
     members = queries.get_aggregate_members(conn, aggregate_id)
+    if not members:
+        return
+
     # Sync portfolio_accounts for the aggregate
     conn.execute("DELETE FROM portfolio_accounts WHERE portfolio_id = ?", (aggregate_id,))
     for m in members:
         for acct in queries.get_portfolio_accounts(conn, m["portfolio_id"]):
             queries.add_account_to_portfolio(conn, aggregate_id, acct["account_id"])
-    build_daily_snapshots(conn, aggregate_id)
+
+    # Collect member snapshots into DataFrames keyed by date
+    member_dfs = []
+    for m in members:
+        snaps = queries.get_snapshots(conn, m["portfolio_id"])
+        if snaps:
+            df = pd.DataFrame([dict(s) for s in snaps])
+            df["snap_date"] = pd.to_datetime(df["snap_date"])
+            df = df.set_index("snap_date")[["total_value", "total_cost", "cash_balance"]]
+            member_dfs.append(df)
+
+    if not member_dfs:
+        return
+
+    # Sum across members, filling missing dates with 0 (portfolio didn't exist yet)
+    combined = member_dfs[0]
+    for df in member_dfs[1:]:
+        combined = combined.add(df, fill_value=0)
+    combined = combined.sort_index()
+
+    # Chain TWR from combined daily values and derived external cash flows
+    conn.execute(
+        "DELETE FROM portfolio_snapshots WHERE portfolio_id = ?", (aggregate_id,)
+    )
+    prev_value = 0.0
+    cumulative_twr = 0.0
+    for snap_date, row in combined.iterrows():
+        total_value = row["total_value"]
+        total_cost = row["total_cost"]
+        cash_balance = row["cash_balance"]
+
+        if prev_value > 0:
+            # external_cf for the day = change in net deposits
+            prev_cost = prev_row["total_cost"]
+            external_cf = total_cost - prev_cost
+            denominator = prev_value + external_cf
+            if denominator > 0:
+                daily_return = total_value / denominator - 1
+            else:
+                daily_return = 0.0
+            cumulative_twr = (1 + cumulative_twr) * (1 + daily_return) - 1
+
+        queries.upsert_snapshot(
+            conn, aggregate_id, snap_date.date(),
+            total_value, total_cost, cash_balance, cumulative_twr,
+        )
+        prev_value = total_value
+        prev_row = row
+
+    conn.commit()
 
 
 def _pdf_to_csv_text(pdf_bytes: bytes) -> str:
@@ -271,7 +327,8 @@ def main():
         return
 
     selected = [p for p in individual_portfolios if p["name"] in selected_names]
-    if len(selected) == 1:
+    is_aggregate = len(selected) > 1
+    if not is_aggregate:
         portfolio_id = selected[0]["portfolio_id"]
     else:
         portfolio_id = _find_or_create_aggregate(conn, selected)
@@ -309,11 +366,17 @@ def main():
                 (portfolio_id,),
             ).fetchone()
             if not latest_snap or not latest_snap["max_date"] or latest_snap["max_date"] < today.isoformat():
-                snap_start = earliest
-                if latest_snap and latest_snap["max_date"]:
-                    snap_start = date.fromisoformat(latest_snap["max_date"]) + timedelta(days=1)
                 with st.spinner("Updating snapshots..."):
-                    build_daily_snapshots(conn, portfolio_id, snap_start, today)
+                    if is_aggregate:
+                        # Rebuild members first, then sum
+                        for sel in selected:
+                            build_daily_snapshots(conn, sel["portfolio_id"])
+                        _rebuild_aggregate_snapshots(conn, portfolio_id)
+                    else:
+                        snap_start = earliest
+                        if latest_snap and latest_snap["max_date"]:
+                            snap_start = date.fromisoformat(latest_snap["max_date"]) + timedelta(days=1)
+                        build_daily_snapshots(conn, portfolio_id, snap_start, today)
 
     snapshots = queries.get_snapshots(conn, portfolio_id)
 
