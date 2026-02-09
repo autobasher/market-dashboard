@@ -4,6 +4,7 @@ import logging
 import sqlite3
 from datetime import date
 
+import pandas as pd
 import yfinance as yf
 
 from market_dashboard.portfolio import queries
@@ -60,9 +61,9 @@ def fetch_historical_prices(
     if df.empty:
         return 0
 
-    # yfinance may return MultiIndex columns for single ticker
-    if hasattr(df.columns, "levels") and len(df.columns.levels) > 1:
-        df = df.droplevel("Ticker", axis=1)
+    # yfinance 1.1+ always returns MultiIndex columns (Price, Ticker)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] for col in df.columns]
 
     count = 0
     for dt_idx, row in df.iterrows():
