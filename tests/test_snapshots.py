@@ -1,28 +1,9 @@
-import sqlite3
 from datetime import date
 
 import pytest
 
-from market_dashboard.database import queries as db_queries
-from market_dashboard.portfolio.schema import initialize_portfolio_schema
 from market_dashboard.portfolio import queries
 from market_dashboard.portfolio.snapshots import build_daily_snapshots
-
-
-@pytest.fixture
-def portfolio_db():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    db_queries.initialize(conn)
-    initialize_portfolio_schema(conn)
-
-    # Set up account, portfolio, and link them
-    queries.insert_account(conn, "acct-1", "Test", "Vanguard")
-    pid = queries.insert_portfolio(conn, "Test Portfolio")
-    queries.add_account_to_portfolio(conn, pid, "acct-1")
-    conn.commit()
-    return conn, pid
 
 
 def test_empty_portfolio(portfolio_db):
