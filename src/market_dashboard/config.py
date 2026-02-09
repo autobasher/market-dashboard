@@ -89,6 +89,38 @@ SECTION_LABELS = {
 }
 
 
+# -- Portfolio display constants -----------------------------------------------
+
+DISPLAY_GROUPS: dict[str, dict] = {
+    "US Multifactor": {"symbols": ["AVLV", "AVUV", "DFAT", "QVAL", "DFUV"], "class": "Equity"},
+    "Non-US Developed Multifactor": {"symbols": ["DFIV", "AVDV", "DISV", "EWJV", "IVAL", "AVIV", "IMOM"], "class": "Equity"},
+    "Emerging Markets Multifactor": {"symbols": ["DFEV", "AVES", "GVAL", "GMOM", "FRDM"], "class": "Equity"},
+    "Commodity Equities": {"symbols": ["OIH", "URNM", "URA"], "class": "Equity"},
+    "Municipal Bonds": {"symbols": ["VTEB", "MUNY"], "class": "Fixed Income"},
+    "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN"], "class": "Alternatives"},
+    "Global Macro": {"symbols": ["HFGM"], "class": "Alternatives"},
+    "Cash": {"symbols": ["VYFXX", "VMMXX", "VMFXX", "BOXX", "VTIP"], "class": "Cash"},
+}
+
+SYMBOL_LABELS: dict[str, str] = {"OUST": "Ouster Inc.", "RIVN": "Rivian Automotive"}
+
+GROUPED_SYMS: set[str] = {sym for info in DISPLAY_GROUPS.values() for sym in info["symbols"]}
+
+CLASS_ORDER: list[str] = ["Equity", "Fixed Income", "Alternatives", "Cash"]
+
+CLASS_BASE_COLORS: dict[str, tuple[int, int, int]] = {
+    "Equity": (30, 100, 220),
+    "Fixed Income": (210, 50, 50),
+    "Alternatives": (210, 180, 30),
+    "Cash": (40, 170, 70),
+}
+
+BENCHMARK_DEFS: dict[str, dict[str, str]] = {
+    "80% S&P 500 / 20% Cash": {"equity": "VOO", "bond": "VGSH"},
+    "80% ACWI / 20% Cash": {"equity": "ACWI", "bond": "VGSH"},
+}
+
+
 @dataclass(frozen=True)
 class Settings:
     db_path: Path = field(default_factory=lambda: Path(os.environ.get(

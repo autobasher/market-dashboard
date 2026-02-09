@@ -11,6 +11,10 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from market_dashboard.config import (
+    BENCHMARK_DEFS, CLASS_BASE_COLORS, CLASS_ORDER, DISPLAY_GROUPS,
+    GROUPED_SYMS, SYMBOL_LABELS,
+)
 from market_dashboard.database.connection import get_app_connection
 from market_dashboard.portfolio import queries
 from market_dashboard.portfolio.parsers import parse_vanguard_csv
@@ -397,20 +401,16 @@ def main():
         ret_src = ret_src.reset_index()
 
         # Build benchmark return series (80/20 equity/cash)
-        _BM_DEFS = {
-            "80% S&P 500 / 20% Cash": {"equity": "VOO", "bond": "VGSH"},
-            "80% ACWI / 20% Cash": {"equity": "ACWI", "bond": "VGSH"},
-        }
         bm_start = view_df.index[0].date()
         bm_end = view_df.index[-1].date()
-        bm_syms = list({s for d in _BM_DEFS.values() for s in (d["equity"], d["bond"])})
+        bm_syms = list({s for d in BENCHMARK_DEFS.values() for s in (d["equity"], d["bond"])})
         for sym in bm_syms:
             fetch_historical_prices(conn, sym, bm_start, bm_end)
 
         ret_long = ret_src.rename(columns={"Return": "value"})[["date", "value"]].copy()
         ret_long["Series"] = "Portfolio"
 
-        for bm_name, bm_info in _BM_DEFS.items():
+        for bm_name, bm_info in BENCHMARK_DEFS.items():
             eq_rows = queries.get_daily_prices(conn, bm_info["equity"], bm_start, bm_end)
             bond_rows = queries.get_daily_prices(conn, bm_info["bond"], bm_start, bm_end)
             if not eq_rows or not bond_rows:
@@ -482,25 +482,6 @@ def main():
         st.altair_chart(bal_chart, use_container_width=True)
 
     # --- Allocation donut chart ---
-    DISPLAY_GROUPS = {
-        "US Multifactor": {"symbols": ["AVLV", "AVUV", "DFAT", "QVAL", "DFUV"], "class": "Equity"},
-        "Non-US Developed Multifactor": {"symbols": ["DFIV", "AVDV", "DISV", "EWJV", "IVAL", "AVIV", "IMOM"], "class": "Equity"},
-        "Emerging Markets Multifactor": {"symbols": ["DFEV", "AVES", "GVAL", "GMOM", "FRDM"], "class": "Equity"},
-        "Commodity Equities": {"symbols": ["OIH", "URNM", "URA"], "class": "Equity"},
-        "Municipal Bonds": {"symbols": ["VTEB", "MUNY"], "class": "Fixed Income"},
-        "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN"], "class": "Alternatives"},
-        "Global Macro": {"symbols": ["HFGM"], "class": "Alternatives"},
-        "Cash": {"symbols": ["VYFXX", "VMMXX", "VMFXX", "BOXX", "VTIP"], "class": "Cash"},
-    }
-    SYMBOL_LABELS = {"OUST": "Ouster Inc.", "RIVN": "Rivian Automotive"}
-    _GROUPED_SYMS = {sym for info in DISPLAY_GROUPS.values() for sym in info["symbols"]}
-    CLASS_ORDER = ["Equity", "Fixed Income", "Alternatives", "Cash"]
-    CLASS_BASE_COLORS = {
-        "Equity": (30, 100, 220),
-        "Fixed Income": (210, 50, 50),
-        "Alternatives": (210, 180, 30),
-        "Cash": (40, 170, 70),
-    }
 
     st.subheader("Allocation")
     alloc = metrics.current_allocation(open_lots, current_prices)
@@ -522,7 +503,7 @@ def main():
             if grp_total > 0.001:
                 alloc_rows.append({"Label": grp, "Allocation": grp_total, "Class": info["class"]})
         for sym, pct in alloc.items():
-            if sym not in _GROUPED_SYMS and pct > 0.001:
+            if sym not in GROUPED_SYMS and pct > 0.001:
                 label = SYMBOL_LABELS.get(sym, sym)
                 alloc_rows.append({"Label": label, "Allocation": pct, "Class": "Equity"})
 
