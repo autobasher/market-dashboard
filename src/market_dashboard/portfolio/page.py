@@ -274,31 +274,23 @@ def _import_section(conn):
 
 
 def _find_or_create_aggregate(conn, selected_portfolios: list) -> int:
-    """Find an existing aggregate with exactly these members, or create one.
-
-    Always rebuilds aggregate snapshots (called on Build click only).
-    """
+    """Find an existing aggregate with exactly these members, or create one."""
     member_ids = sorted(p["portfolio_id"] for p in selected_portfolios)
     target = set(member_ids)
 
     # Check existing aggregates that contain the first member
-    agg_id = None
     candidates = queries.get_aggregates_containing(conn, member_ids[0])
     for agg in candidates:
         members = queries.get_aggregate_members(conn, agg["portfolio_id"])
         if {m["portfolio_id"] for m in members} == target:
-            agg_id = agg["portfolio_id"]
-            break
+            return agg["portfolio_id"]
 
-    if agg_id is None:
-        name = " + ".join(p["name"] for p in selected_portfolios)
-        agg_id = queries.insert_portfolio(conn, name, is_aggregate=True)
-        for mid in member_ids:
-            queries.add_aggregate_member(conn, agg_id, mid)
-        conn.commit()
-
-    with st.spinner("Building combined snapshots..."):
-        _rebuild_aggregate_snapshots(conn, agg_id)
+    # None found — create one
+    name = " + ".join(p["name"] for p in selected_portfolios)
+    agg_id = queries.insert_portfolio(conn, name, is_aggregate=True)
+    for mid in member_ids:
+        queries.add_aggregate_member(conn, agg_id, mid)
+    conn.commit()
     return agg_id
 
 
@@ -340,7 +332,6 @@ def main():
     # Only proceed when Build is clicked; store selection in session state
     if build_clicked:
         st.session_state["built_portfolios"] = selected_names
-        st.session_state.pop("built_portfolio_id", None)  # force rebuild
     built = st.session_state.get("built_portfolios")
 
     # If nothing built yet, or checkboxes changed since last Build, wait
@@ -353,16 +344,11 @@ def main():
         return
     is_aggregate = len(selected) > 1
 
-    # Resolve portfolio_id — use cached value from session to avoid repeat work
-    cached_pid = st.session_state.get("built_portfolio_id")
-    if cached_pid is not None:
-        portfolio_id = cached_pid
-    elif not is_aggregate:
+    # Resolve portfolio_id fresh every time (no caching — aggregate lookup is cheap)
+    if not is_aggregate:
         portfolio_id = selected[0]["portfolio_id"]
-        st.session_state["built_portfolio_id"] = portfolio_id
     else:
         portfolio_id = _find_or_create_aggregate(conn, selected)
-        st.session_state["built_portfolio_id"] = portfolio_id
 
     account_ids = queries.get_effective_account_ids(conn, portfolio_id)
     if not account_ids:
@@ -434,6 +420,16 @@ def main():
     else:
         snap_df = pd.DataFrame()
 
+    # --- Live portfolio value (always current, regardless of period) ---
+    live_prices = fetch_live_prices(symbols)
+    portfolio_value = cash_balance + sum(
+        lot["shares_remaining"] * live_prices.get(lot["symbol"], current_prices.get(lot["symbol"], 0.0))
+        for lot in open_lots
+        if lot["shares_remaining"] > 0
+    )
+    prev_close_value = float(snap_df["total_value"].iloc[-1]) if not snap_df.empty else None
+    st.metric("Portfolio Value", f"${portfolio_value:,.2f}")
+
     # --- Period selector ---
     PERIODS = {
         "1D": relativedelta(days=1),
@@ -453,27 +449,15 @@ def main():
     # --- 1D intraday mode ---
     is_intraday = period == "1D"
     if is_intraday:
-        live_prices = fetch_live_prices(symbols)
-        live_value = cash_balance + sum(
-            lot["shares_remaining"] * live_prices.get(lot["symbol"], current_prices.get(lot["symbol"], 0.0))
-            for lot in open_lots
-            if lot["shares_remaining"] > 0
-        )
-        # Previous close = latest snapshot's total_value
-        prev_close_value = float(snap_df["total_value"].iloc[-1]) if not snap_df.empty else None
         if prev_close_value and prev_close_value > 0:
-            day_return = live_value / prev_close_value - 1
-            day_change = live_value - prev_close_value
+            day_return = portfolio_value / prev_close_value - 1
+            day_change = portfolio_value - prev_close_value
         else:
             day_return = day_change = None
-        st.metric("Portfolio Value", f"${live_value:,.2f}")
         m1, m2 = st.columns(2)
         m1.metric("Day Return", f"{day_return:.2%}" if day_return is not None else "—")
         m2.metric("Day Change", f"${day_change:+,.2f}" if day_change is not None else "—")
     else:
-        # Use snapshot value (authoritative) — lots × prices can diverge
-        portfolio_value = float(snap_df["total_value"].iloc[-1]) if not snap_df.empty else 0.0
-        st.metric("Portfolio Value", f"${portfolio_value:,.2f}")
 
         # Compute period start date
         if period == "All" or period is None:
