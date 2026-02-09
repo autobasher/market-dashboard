@@ -218,7 +218,7 @@ def _import_section(conn):
 
 
 def main():
-    st.set_page_config(page_title="Portfolio", page_icon=":material/account_balance:", layout="wide")
+    st.set_page_config(page_title="Performance", page_icon=":material/account_balance:", layout="wide")
     st.markdown("""<style>
         [data-testid="stMetricLabel"] {
             font-size: 0.75rem;

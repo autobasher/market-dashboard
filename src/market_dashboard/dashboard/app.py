@@ -200,7 +200,7 @@ def main():
     _start_poller()
 
     st.set_page_config(
-        page_title="Market Dashboard",
+        page_title="Live Market",
         page_icon=":material/monitoring:",
         layout="wide",
     )

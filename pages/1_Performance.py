@@ -1,4 +1,4 @@
-"""Portfolio page entry point for Streamlit multipage navigation."""
+"""Performance page entry point for Streamlit multipage navigation."""
 
 import sys
 from pathlib import Path
