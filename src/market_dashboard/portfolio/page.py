@@ -274,23 +274,29 @@ def _import_section(conn):
 
 
 def _find_or_create_aggregate(conn, selected_portfolios: list) -> int:
-    """Find an existing aggregate with exactly these members, or create one."""
+    """Find an existing aggregate with exactly these members, or create one.
+
+    Always rebuilds aggregate snapshots (called on Build click only).
+    """
     member_ids = sorted(p["portfolio_id"] for p in selected_portfolios)
     target = set(member_ids)
 
     # Check existing aggregates that contain the first member
+    agg_id = None
     candidates = queries.get_aggregates_containing(conn, member_ids[0])
     for agg in candidates:
         members = queries.get_aggregate_members(conn, agg["portfolio_id"])
         if {m["portfolio_id"] for m in members} == target:
-            return agg["portfolio_id"]
+            agg_id = agg["portfolio_id"]
+            break
 
-    # None found — create one
-    name = " + ".join(p["name"] for p in selected_portfolios)
-    agg_id = queries.insert_portfolio(conn, name, is_aggregate=True)
-    for mid in member_ids:
-        queries.add_aggregate_member(conn, agg_id, mid)
-    conn.commit()
+    if agg_id is None:
+        name = " + ".join(p["name"] for p in selected_portfolios)
+        agg_id = queries.insert_portfolio(conn, name, is_aggregate=True)
+        for mid in member_ids:
+            queries.add_aggregate_member(conn, agg_id, mid)
+        conn.commit()
+
     with st.spinner("Building combined snapshots..."):
         _rebuild_aggregate_snapshots(conn, agg_id)
     return agg_id
@@ -326,27 +332,37 @@ def main():
         checked[p["name"]] = sel_cols[i].checkbox(p["name"], key=f"pf_check_{p['portfolio_id']}")
     build_clicked = sel_cols[-1].button("Build", key="pf_build")
 
-    selected_names = [name for name, on in checked.items() if on]
+    selected_names = sorted(name for name, on in checked.items() if on)
     if not selected_names:
         st.info("Select one or more portfolios and click Build.")
         return
 
-    # Only proceed on Build click (or if already built in session)
+    # Only proceed when Build is clicked; store selection in session state
     if build_clicked:
         st.session_state["built_portfolios"] = selected_names
-    built = st.session_state.get("built_portfolios", [])
-    if not built:
-        st.info("Select one or more portfolios and click Build.")
+        st.session_state.pop("built_portfolio_id", None)  # force rebuild
+    built = st.session_state.get("built_portfolios")
+
+    # If nothing built yet, or checkboxes changed since last Build, wait
+    if not built or sorted(built) != selected_names:
+        st.info("Click **Build** to load selected portfolios.")
         return
 
     selected = [p for p in individual_portfolios if p["name"] in built]
     if not selected:
         return
     is_aggregate = len(selected) > 1
-    if not is_aggregate:
+
+    # Resolve portfolio_id — use cached value from session to avoid repeat work
+    cached_pid = st.session_state.get("built_portfolio_id")
+    if cached_pid is not None:
+        portfolio_id = cached_pid
+    elif not is_aggregate:
         portfolio_id = selected[0]["portfolio_id"]
+        st.session_state["built_portfolio_id"] = portfolio_id
     else:
         portfolio_id = _find_or_create_aggregate(conn, selected)
+        st.session_state["built_portfolio_id"] = portfolio_id
 
     account_ids = queries.get_effective_account_ids(conn, portfolio_id)
     if not account_ids:
@@ -383,9 +399,17 @@ def main():
             if not latest_snap or not latest_snap["max_date"] or latest_snap["max_date"] < today.isoformat():
                 with st.spinner("Updating snapshots..."):
                     if is_aggregate:
-                        # Rebuild members first, then sum
+                        # Update each member's snapshots incrementally, then rebuild aggregate
                         for sel in selected:
-                            build_daily_snapshots(conn, sel["portfolio_id"])
+                            member_snap = conn.execute(
+                                "SELECT MAX(snap_date) as max_date FROM portfolio_snapshots WHERE portfolio_id = ?",
+                                (sel["portfolio_id"],),
+                            ).fetchone()
+                            member_start = earliest
+                            if member_snap and member_snap["max_date"]:
+                                member_start = date.fromisoformat(member_snap["max_date"]) + timedelta(days=1)
+                            if member_start <= today:
+                                build_daily_snapshots(conn, sel["portfolio_id"], member_start, today)
                         _rebuild_aggregate_snapshots(conn, portfolio_id)
                     else:
                         snap_start = earliest
