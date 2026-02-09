@@ -45,9 +45,19 @@ Then chain daily TWR: `r_t = V_t / (V_{t-1} + CF_t) - 1`
 ### Validation
 - Total value: $2,713,846.26 (unchanged, within $0.61 of Excel)
 - Cash: $848.63 (exact match)
-- TWR: 105.27% cumulative (Nov 2019–Feb 2026)
+- ~~TWR: 105.27% cumulative (Nov 2019–Feb 2026)~~ **Incorrect — see correction below**
 - July 2022 artifact eliminated — smooth transition through the $891K deposit
 - Net deposits correctly captures all external flows ($1,311K on Jul 29 vs old $810K)
+
+> **Correction (2026-02-09):** The 105.27% figure was never the actual stored TWR.
+> The dashboard showed ~59.7% both before and after data refreshes. Best theories
+> for where 105% came from: (1) the previous Claude session stated it
+> conversationally without verifying against the DB — a "vibe-y" answer rather
+> than a checked output; (2) possibly confused with a different metric or
+> intermediate calculation during iterative development of the TWR feature.
+> Diagnostic confirmed 59.7% is internally consistent: daily returns are
+> reasonable (max ±6%), trajectory tracks market events correctly, no anomalies
+> on deposit or split days.
 
 ### Known limitations
 - ~$29K undercount in net_deposits (two early cash deposits with no matching sweeps)
