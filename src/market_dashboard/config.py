@@ -97,8 +97,11 @@ DISPLAY_GROUPS: dict[str, dict] = {
     "Emerging Markets Multifactor": {"symbols": ["DFEV", "AVES", "GVAL", "GMOM", "FRDM"], "class": "Equity"},
     "Commodity Equities": {"symbols": ["OIH", "URNM", "URA"], "class": "Equity"},
     "Municipal Bonds": {"symbols": ["VTEB", "MUNY"], "class": "Fixed Income"},
-    "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN", "AQMNX"], "class": "Alternatives"},
+    "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN", "AQMNX", "RSBT", "AHLT"], "class": "Alternatives"},
     "Global Macro": {"symbols": ["HFGM"], "class": "Alternatives"},
+    "US Treasuries": {"symbols": ["VGIT", "BOXA"], "class": "Fixed Income"},
+    "US TIPS": {"symbols": ["SCHP"], "class": "Fixed Income"},
+    "Non-US Bonds": {"symbols": ["DFGX"], "class": "Fixed Income"},
     "Cash": {"symbols": ["VYFXX", "VMMXX", "VMFXX", "BOXX", "VTIP"], "class": "Cash"},
 }
 
