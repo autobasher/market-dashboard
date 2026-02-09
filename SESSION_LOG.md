@@ -72,3 +72,7 @@ Three changes preparing for a new PDF import:
 - `update_transaction(conn, tx_id, **fields)` in `queries.py`
 - `delete_transaction(conn, tx_id)` in `queries.py`
 - Tests in `tests/test_tx_queries.py`
+
+## 2026-02-09 Session started — Codebase cleanup (8 phases)
+
+Goal: Dead code removal, extract shared helpers, move config/SQL to proper layers, fix 10 test failures, add PDF parser tests, deduplicate fixtures, enable foreign keys.

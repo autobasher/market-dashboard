@@ -246,28 +246,3 @@ def pdf_to_csv_rows(pdf_path: Path | str) -> list[dict]:
     return [_parse_row(r) for r in raw_rows]
 
 
-def pdf_to_csv_file(pdf_path: Path | str, csv_path: Path | str) -> int:
-    """Parse a Vanguard PDF and write a Vanguard-format CSV. Returns row count."""
-    import csv as csv_mod
-
-    rows = pdf_to_csv_rows(pdf_path)
-    if not rows:
-        return 0
-
-    fieldnames = [
-        "Trade Date",
-        "Settlement Date",
-        "Transaction Type",
-        "Transaction Description",
-        "Symbol",
-        "Shares",
-        "Share Price",
-        "Commission",
-        "Fees",
-        "Net Amount",
-    ]
-    with open(str(csv_path), "w", newline="", encoding="utf-8") as f:
-        writer = csv_mod.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-    return len(rows)

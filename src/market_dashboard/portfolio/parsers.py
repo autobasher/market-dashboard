@@ -3,8 +3,6 @@ from __future__ import annotations
 import io
 from datetime import date, datetime
 from pathlib import Path
-from typing import Callable
-
 import pandas as pd
 
 from market_dashboard.portfolio.models import Transaction, TxType
@@ -129,10 +127,3 @@ def parse_vanguard_csv(
         ))
 
     return transactions
-
-
-ParserFn = Callable[[Path | str | io.StringIO, str], list[Transaction]]
-
-PARSERS: dict[str, ParserFn] = {
-    "vanguard": parse_vanguard_csv,
-}
