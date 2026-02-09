@@ -27,47 +27,8 @@ from market_dashboard.portfolio import metrics
 
 
 
-def _get_all_open_lots(conn, account_ids: list[str]):
-    all_lots = []
-    for acct_id in account_ids:
-        rows = conn.execute(
-            "SELECT * FROM lots WHERE account_id = ? AND shares_remaining > 0",
-            (acct_id,),
-        ).fetchall()
-        all_lots.extend(rows)
-    return all_lots
-
-
-def _get_current_prices(conn, symbols: list[str]) -> dict[str, float]:
-    prices = {}
-    for sym in symbols:
-        row = conn.execute(
-            "SELECT close FROM historical_prices "
-            "WHERE symbol = ? ORDER BY price_date DESC LIMIT 1",
-            (sym,),
-        ).fetchone()
-        if row:
-            prices[sym] = row["close"]
-    return prices
-
-
-def _get_portfolio_id(conn) -> int | None:
-    row = conn.execute("SELECT portfolio_id FROM portfolios LIMIT 1").fetchone()
-    return row["portfolio_id"] if row else None
-
-
-def _get_account_ids(conn) -> list[str]:
-    rows = conn.execute("SELECT account_id FROM accounts").fetchall()
-    return [r["account_id"] for r in rows]
-
-
 def _symbols_from_lots(lots) -> list[str]:
     return list({lot["symbol"] for lot in lots})
-
-
-def _get_stored_csv(conn) -> dict | None:
-    row = conn.execute("SELECT * FROM uploaded_csv WHERE id = 1").fetchone()
-    return dict(row) if row else None
 
 
 def _wipe_portfolio_data(conn):
@@ -169,7 +130,7 @@ def _pdf_to_csv_text(pdf_bytes: bytes) -> str:
 
 
 def _import_section(conn):
-    stored = _get_stored_csv(conn)
+    stored = queries.get_stored_csv(conn)
 
     with st.expander("Import Transactions", expanded=stored is None):
         if stored:
@@ -243,23 +204,23 @@ def main():
     _import_section(conn)
 
     # Check if any accounts exist
-    account_ids = _get_account_ids(conn)
+    account_ids = queries.get_all_account_ids(conn)
     if not account_ids:
         st.info("Upload a Vanguard CSV to get started.")
         return
 
-    portfolio_id = _get_portfolio_id(conn)
+    portfolio_id = queries.get_default_portfolio_id(conn)
     if portfolio_id is None:
         st.info("No portfolio found. Import transactions first.")
         return
 
     # Gather data
-    stored = _get_stored_csv(conn)
+    stored = queries.get_stored_csv(conn)
     cash_balance = stored["cash_balance"] if stored else 0.0
 
-    open_lots = _get_all_open_lots(conn, account_ids)
+    open_lots = queries.get_all_open_lots(conn, account_ids)
     symbols = _symbols_from_lots(open_lots)
-    current_prices = _get_current_prices(conn, symbols)
+    current_prices = queries.get_latest_prices(conn, symbols)
 
     # Ensure prices and snapshots are up to today
     today = date.today()
@@ -271,7 +232,7 @@ def main():
             earliest = min(date.fromisoformat(r["trade_date"]) for r in tx_rows)
             with st.spinner("Checking prices..."):
                 ensure_prices_for_portfolio(conn, symbols, earliest, today)
-            current_prices = _get_current_prices(conn, symbols)
+            current_prices = queries.get_latest_prices(conn, symbols)
 
             # Rebuild snapshots if stale or missing
             latest_snap = conn.execute(

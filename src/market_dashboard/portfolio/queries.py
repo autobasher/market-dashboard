@@ -345,6 +345,51 @@ def delete_snapshots_from(
     )
 
 
+# --- Convenience queries ---
+
+def get_all_open_lots(
+    conn: sqlite3.Connection, account_ids: list[str]
+) -> list[sqlite3.Row]:
+    all_lots = []
+    for acct_id in account_ids:
+        rows = conn.execute(
+            "SELECT * FROM lots WHERE account_id = ? AND shares_remaining > 0",
+            (acct_id,),
+        ).fetchall()
+        all_lots.extend(rows)
+    return all_lots
+
+
+def get_latest_prices(
+    conn: sqlite3.Connection, symbols: list[str]
+) -> dict[str, float]:
+    prices = {}
+    for sym in symbols:
+        row = conn.execute(
+            "SELECT close FROM historical_prices "
+            "WHERE symbol = ? ORDER BY price_date DESC LIMIT 1",
+            (sym,),
+        ).fetchone()
+        if row:
+            prices[sym] = row["close"]
+    return prices
+
+
+def get_default_portfolio_id(conn: sqlite3.Connection) -> int | None:
+    row = conn.execute("SELECT portfolio_id FROM portfolios LIMIT 1").fetchone()
+    return row["portfolio_id"] if row else None
+
+
+def get_all_account_ids(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute("SELECT account_id FROM accounts").fetchall()
+    return [r["account_id"] for r in rows]
+
+
+def get_stored_csv(conn: sqlite3.Connection) -> dict | None:
+    row = conn.execute("SELECT * FROM uploaded_csv WHERE id = 1").fetchone()
+    return dict(row) if row else None
+
+
 # --- Lot Rebuild ---
 
 def delete_lots_and_disposals(

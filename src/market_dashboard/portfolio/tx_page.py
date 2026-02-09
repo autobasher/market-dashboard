@@ -19,7 +19,7 @@ _TX_TYPE_OPTIONS = [t.value for t in TxType]
 
 def _render_transaction_table(conn):
     """Render the full transaction table with filters."""
-    account_ids = [r["account_id"] for r in conn.execute("SELECT account_id FROM accounts").fetchall()]
+    account_ids = queries.get_all_account_ids(conn)
     if not account_ids:
         st.info("No transactions. Import data on the Portfolio page first.")
         return
@@ -113,7 +113,7 @@ def _edit_section(conn, df):
 def _add_section(conn):
     """Add a new transaction manually."""
     st.subheader("Add Transaction")
-    account_ids = [r["account_id"] for r in conn.execute("SELECT account_id FROM accounts").fetchall()]
+    account_ids = queries.get_all_account_ids(conn)
     if not account_ids:
         st.warning("No accounts exist. Import data first.")
         return False
@@ -178,17 +178,15 @@ def _delete_section(conn, df):
 
 def _rebuild_section(conn):
     """Rebuild lots and snapshots after edits."""
-    account_ids = [r["account_id"] for r in conn.execute("SELECT account_id FROM accounts").fetchall()]
-    portfolio_row = conn.execute("SELECT portfolio_id FROM portfolios LIMIT 1").fetchone()
-    if not account_ids or not portfolio_row:
+    account_ids = queries.get_all_account_ids(conn)
+    portfolio_id = queries.get_default_portfolio_id(conn)
+    if not account_ids or not portfolio_id:
         return
 
     if st.button("Rebuild Portfolio", type="primary"):
         with st.spinner("Rebuilding lots..."):
             for acct_id in account_ids:
                 rebuild_lots(conn, acct_id)
-
-        portfolio_id = portfolio_row["portfolio_id"]
         with st.spinner("Rebuilding snapshots..."):
             build_daily_snapshots(conn, portfolio_id)
 
