@@ -103,12 +103,9 @@ def build_daily_snapshots(
     # Pre-load all prices into memory: {symbol: {date_str: close}}
     all_symbols = list({tx["symbol"] for tx in all_txs if tx["symbol"]})
     prices_by_sym: dict[str, dict[str, float]] = {}
-    earliest_price: dict[str, float] = {}  # symbol -> earliest known close
     for sym in all_symbols:
         rows = queries.get_daily_prices(conn, sym, first_date, snap_end)
         prices_by_sym[sym] = {r["price_date"]: r["close"] for r in rows}
-        if rows:
-            earliest_price[sym] = rows[0]["close"]
 
     # Build split factors to reverse yfinance's split adjustment
     split_factors = _build_split_factors(all_txs)
@@ -142,7 +139,7 @@ def build_daily_snapshots(
                 factor = _unadjust_factor(split_factors, sym, prev_date_str)
                 pre_tx_equity += held * raw * factor
             else:
-                pre_tx_equity += held * last_price.get(sym, earliest_price.get(sym, 0.0))
+                pre_tx_equity += held * last_price.get(sym, 0.0)
         pre_tx_value = pre_tx_equity + max(vmfxx_balance, 0.0)
 
         # 2. Update prices for today (with today's factor, for total_value)
@@ -197,7 +194,7 @@ def build_daily_snapshots(
 
         # 4. Compute today's total value
         equity_value = sum(
-            held * last_price.get(sym, earliest_price.get(sym, 0.0))
+            held * last_price.get(sym, 0.0)
             for sym, held in positions.items() if held > 0
         )
         cash = max(vmfxx_balance, 0.0)  # clamp FP dust
