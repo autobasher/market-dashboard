@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_DB_PATH = _PROJECT_ROOT / "data" / "market_dashboard.db"
@@ -122,6 +123,62 @@ CLASS_BASE_COLORS: dict[str, tuple[int, int, int]] = {
     "Alternatives": (210, 180, 30),
     "Cash": (40, 170, 70),
 }
+
+# -- ISIN → ticker mapping (AIL portfolio) -----------------------------------
+
+class TickerSource(NamedTuple):
+    ticker: str
+    source: str  # "yahoo" or "eodhd"
+
+
+ISIN_MAP: dict[str, TickerSource] = {
+    # Yahoo Finance (10)
+    "US68989M1036": TickerSource("OUST", "yahoo"),
+    "US76954A1034": TickerSource("RIVN", "yahoo"),
+    "CA85210A1049": TickerSource("U-UN.TO", "yahoo"),
+    "IE00B1FZSC47": TickerSource("IDTP.L", "yahoo"),
+    "IE00BZ0G8977": TickerSource("TIPS.L", "yahoo"),
+    "IE00BZ163L38": TickerSource("VDET.L", "yahoo"),
+    "IE00BJRCLL96": TickerSource("JPGL.L", "yahoo"),
+    "IE00BMGNVD65": TickerSource("AGUG.AS", "yahoo"),
+    "IE0003R87OG3": TickerSource("AVGS.L", "yahoo"),
+    "IE00B3B8PX14": TickerSource("IGIL.L", "yahoo"),
+    # EODHD EUFUND (6)
+    "IE00B0HCGS80": TickerSource("IE00B0HCGS80.EUFUND", "eodhd"),
+    "IE00B2PC0609": TickerSource("IE00B2PC0609.EUFUND", "eodhd"),
+    "LU1103257975": TickerSource("LU1103257975.EUFUND", "eodhd"),
+    "IE00B3V7VL84": TickerSource("IE00B3V7VL84.EUFUND", "eodhd"),
+    "IE00BG85LS38": TickerSource("IE00BG85LS38.EUFUND", "eodhd"),
+    "LU1662505954": TickerSource("LU1662505954.EUFUND", "eodhd"),
+}
+
+EODHD_TICKERS: frozenset[str] = frozenset(
+    ts.ticker for ts in ISIN_MAP.values() if ts.source == "eodhd"
+)
+
+
+def _load_env_file() -> dict[str, str]:
+    """Read key=value pairs from .env at project root."""
+    env_path = _PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return {}
+    result = {}
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        result[key.strip()] = value.strip()
+    return result
+
+
+def get_eodhd_api_key() -> str | None:
+    """Return EODHD API key from environment or .env file."""
+    key = os.environ.get("EODHD_API_KEY")
+    if key:
+        return key
+    return _load_env_file().get("EODHD_API_KEY")
+
 
 @dataclass(frozen=True)
 class Settings:

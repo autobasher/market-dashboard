@@ -7,7 +7,9 @@ from datetime import date
 import pandas as pd
 import yfinance as yf
 
+from market_dashboard.config import EODHD_TICKERS
 from market_dashboard.portfolio import queries
+from market_dashboard.portfolio.eodhd_prices import fetch_eodhd_prices
 from market_dashboard.portfolio.models import TxType
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,8 @@ def ensure_splits_for_portfolio(
 
     Returns the number of splits inserted or updated.
     """
+    # EODHD EUFUND tickers are mutual funds — no splits
+    symbols = [s for s in symbols if s not in EODHD_TICKERS]
     count = 0
     errors = 0
     for sym in symbols:
@@ -146,23 +150,31 @@ def ensure_splits_for_portfolio(
     return count
 
 
-def fetch_live_prices(symbols: list[str]) -> dict[str, float]:
-    """Fetch current quotes from yfinance for intraday portfolio valuation.
+def fetch_live_prices(
+    symbols: list[str],
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, float]:
+    """Fetch current quotes for intraday portfolio valuation.
 
-    During market hours, returns the latest traded price.
-    After hours, returns the most recent closing price.
+    Yahoo tickers: latest traded price via yfinance.
+    EODHD tickers: latest cached price from DB (daily NAV only).
     VMFXX is hardcoded to $1.00 (money market).
     """
     if not symbols:
         return {}
 
     prices: dict[str, float] = {}
-    # VMFXX is always $1.00
-    non_cash = [s for s in symbols if s != "VMFXX"]
     if "VMFXX" in symbols:
         prices["VMFXX"] = 1.0
 
-    for sym in non_cash:
+    non_cash = [s for s in symbols if s != "VMFXX"]
+    eodhd_syms = [s for s in non_cash if s in EODHD_TICKERS]
+    yahoo_syms = [s for s in non_cash if s not in EODHD_TICKERS]
+
+    if eodhd_syms and conn is not None:
+        prices.update(queries.get_latest_prices(conn, eodhd_syms))
+
+    for sym in yahoo_syms:
         try:
             info = yf.Ticker(sym).fast_info
             price = info.get("lastPrice") or info.get("last_price")
@@ -183,5 +195,8 @@ def ensure_prices_for_portfolio(
     """Fetch/cache prices for all symbols. Returns {symbol: rows_inserted}."""
     results = {}
     for sym in symbols:
-        results[sym] = fetch_historical_prices(conn, sym, start, end)
+        if sym in EODHD_TICKERS:
+            results[sym] = fetch_eodhd_prices(conn, sym, start, end)
+        else:
+            results[sym] = fetch_historical_prices(conn, sym, start, end)
     return results

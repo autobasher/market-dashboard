@@ -17,7 +17,7 @@ from market_dashboard.config import (
 )
 from market_dashboard.database.connection import get_app_connection
 from market_dashboard.portfolio import queries
-from market_dashboard.portfolio.parsers import parse_vanguard_csv
+from market_dashboard.portfolio.parsers import parse_vanguard_csv, parse_ail_xlsx
 from market_dashboard.portfolio.pdf_parser import pdf_to_csv_rows
 from market_dashboard.portfolio.fifo import rebuild_lots
 from market_dashboard.portfolio.prices import ensure_prices_for_portfolio, ensure_splits_for_portfolio, fetch_historical_prices, fetch_live_prices
@@ -51,13 +51,15 @@ def _store_csv(conn, filename: str, content: bytes, account_id: str, account_nam
     )
 
 
-def _do_import(conn, csv_text: str, portfolio_name: str):
-    """Parse CSV, wipe old data for this portfolio, and rebuild."""
+def _do_import(conn, portfolio_name: str, csv_text: str | None = None,
+               txs=None, broker: str = "Vanguard"):
+    """Parse transactions, wipe old data for this portfolio, and rebuild."""
     account_id = portfolio_name.lower().replace(" ", "-")
 
-    txs = parse_vanguard_csv(io.StringIO(csv_text), account_id)
+    if txs is None:
+        txs = parse_vanguard_csv(io.StringIO(csv_text), account_id)
     if not txs:
-        st.warning("No transactions found in CSV.")
+        st.warning("No transactions found.")
         return
 
     # Find or create portfolio + account
@@ -66,7 +68,7 @@ def _do_import(conn, csv_text: str, portfolio_name: str):
         portfolio_id = existing["portfolio_id"]
         _wipe_account_data(conn, account_id, portfolio_id)
     else:
-        queries.insert_account(conn, account_id, portfolio_name, "Vanguard")
+        queries.insert_account(conn, account_id, portfolio_name, broker)
         portfolio_id = queries.insert_portfolio(conn, portfolio_name)
         queries.add_account_to_portfolio(conn, portfolio_id, account_id)
 
@@ -228,23 +230,37 @@ def _import_section(conn):
         if stored:
             col_info, col_dl = st.columns([3, 1])
             col_info.caption(f"Current file: **{stored['filename']}** (uploaded {stored['uploaded_at']})")
+            dl_mime = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                       if stored["filename"].endswith(".xlsx") else "text/csv")
             col_dl.download_button(
-                "Download CSV",
+                "Download",
                 data=stored["content"],
                 file_name=stored["filename"],
-                mime="text/csv",
+                mime=dl_mime,
             )
 
         default_cash = stored["cash_balance"] if stored else 0.0
         cash_balance = st.number_input("Cash Balance (VMFXX)", value=float(default_cash), min_value=0.0, step=0.01, format="%.2f")
 
-        uploaded = st.file_uploader("Upload Vanguard CSV or PDF", type=["csv", "pdf"])
+        uploaded = st.file_uploader("Upload transactions (CSV, PDF, or xlsx)", type=["csv", "pdf", "xlsx"])
 
-        # PDF preview: convert and show before import
         csv_text = None
+        xlsx_bytes = None
         if uploaded:
             raw_bytes = uploaded.getvalue()
-            if uploaded.name.lower().endswith(".pdf"):
+            if uploaded.name.lower().endswith(".xlsx"):
+                xlsx_bytes = raw_bytes
+                try:
+                    preview_df = pd.read_excel(
+                        io.BytesIO(raw_bytes), sheet_name="transactions", engine="openpyxl",
+                    )
+                    show_cols = [c for c in ["Date", "ISIN", "Quantity", "Price", "Type"] if c in preview_df.columns]
+                    st.caption(f"Found {len(preview_df)} transactions:")
+                    st.dataframe(preview_df[show_cols], use_container_width=True, hide_index=True)
+                except Exception:
+                    st.warning("Could not read xlsx — expected a 'transactions' sheet.")
+                    xlsx_bytes = None
+            elif uploaded.name.lower().endswith(".pdf"):
                 with st.spinner("Converting PDF..."):
                     csv_text = _pdf_to_csv_text(raw_bytes)
                 if csv_text:
@@ -256,18 +272,22 @@ def _import_section(conn):
             else:
                 csv_text = raw_bytes.decode("utf-8")
 
-        can_import = uploaded and portfolio_name and csv_text
+        can_import = uploaded and portfolio_name and (csv_text or xlsx_bytes)
         if st.button("Import", disabled=not can_import):
-            if not csv_text or not portfolio_name:
+            if not portfolio_name:
                 return
             try:
-                csv_bytes = csv_text.encode("utf-8")
-                csv_filename = uploaded.name.rsplit(".", 1)[0] + ".csv" if uploaded.name.lower().endswith(".pdf") else uploaded.name
-
-                _store_csv(conn, csv_filename, csv_bytes, account_id, portfolio_name, cash_balance)
-                conn.commit()
-
-                _do_import(conn, csv_text, portfolio_name)
+                if xlsx_bytes:
+                    _store_csv(conn, uploaded.name, xlsx_bytes, account_id, portfolio_name, cash_balance)
+                    conn.commit()
+                    txs = parse_ail_xlsx(io.BytesIO(xlsx_bytes), account_id)
+                    _do_import(conn, portfolio_name, txs=txs, broker="AIL")
+                else:
+                    csv_bytes = csv_text.encode("utf-8")
+                    csv_filename = uploaded.name.rsplit(".", 1)[0] + ".csv" if uploaded.name.lower().endswith(".pdf") else uploaded.name
+                    _store_csv(conn, csv_filename, csv_bytes, account_id, portfolio_name, cash_balance)
+                    conn.commit()
+                    _do_import(conn, portfolio_name, csv_text=csv_text)
 
             except Exception as e:
                 st.error(f"Import failed: {e}")
@@ -421,7 +441,7 @@ def main():
         snap_df = pd.DataFrame()
 
     # --- Live portfolio value (always current, regardless of period) ---
-    live_prices = fetch_live_prices(symbols)
+    live_prices = fetch_live_prices(symbols, conn)
     portfolio_value = cash_balance + sum(
         lot["shares_remaining"] * live_prices.get(lot["symbol"], current_prices.get(lot["symbol"], 0.0))
         for lot in open_lots

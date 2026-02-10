@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import io
+import logging
 from datetime import date, datetime
 from pathlib import Path
 import pandas as pd
 
+from market_dashboard.config import ISIN_MAP
 from market_dashboard.portfolio.models import Transaction, TxType
+
+logger = logging.getLogger(__name__)
 
 # Map Vanguard's transaction type strings to our TxType enum
 _VANGUARD_TX_MAP = {
@@ -125,5 +129,68 @@ def parse_vanguard_csv(
             raw_description=raw_description,
             source_file=source,
         ))
+
+    return transactions
+
+
+_AIL_TX_MAP = {"Buy": TxType.BUY, "Sell": TxType.SELL}
+
+
+def parse_ail_xlsx(
+    file_path: Path | str | io.BytesIO,
+    account_id: str,
+) -> list[Transaction]:
+    """Parse an AIL transactions xlsx into Transaction objects.
+
+    Resolves ISINs to tickers via ISIN_MAP. Computes total_amount and fees (1%).
+    """
+    df = pd.read_excel(file_path, sheet_name="transactions", engine="openpyxl")
+    source = str(file_path) if not isinstance(file_path, io.BytesIO) else "<xlsx>"
+
+    transactions: list[Transaction] = []
+    unmapped: set[str] = set()
+
+    for _, row in df.iterrows():
+        isin = str(row.get("ISIN", "")).strip()
+        if not isin:
+            continue
+
+        ts = ISIN_MAP.get(isin)
+        if ts is None:
+            unmapped.add(isin)
+            continue
+        symbol = ts.ticker
+
+        trade_date = pd.to_datetime(row["Date"]).date()
+
+        tx_type_str = str(row.get("Type", "")).strip()
+        tx_type = _AIL_TX_MAP.get(tx_type_str)
+        if tx_type is None:
+            logger.warning("Unknown tx type '%s' for ISIN %s — skipping", tx_type_str, isin)
+            continue
+
+        quantity = float(row["Quantity"])
+        price = float(row["Price"])
+        total_amount = quantity * price
+        fees = abs(total_amount) * 0.01
+
+        transactions.append(Transaction(
+            tx_id=None,
+            account_id=account_id,
+            trade_date=trade_date,
+            settlement_date=None,
+            tx_type=tx_type,
+            symbol=symbol,
+            shares=abs(quantity),
+            price_per_share=price,
+            total_amount=total_amount,
+            fees=fees,
+            split_ratio=None,
+            raw_description=f"{tx_type_str} {isin}",
+            source_file=source,
+        ))
+
+    if unmapped:
+        logger.warning("Unmapped ISINs skipped: %s", ", ".join(sorted(unmapped)))
 
     return transactions
