@@ -30,6 +30,14 @@ Format: Date, context, alternatives considered, choice, rationale, impact.
 - **Rationale**: Cash balance is a first-class number in portfolio accounting. Estimation would compound errors.
 - **Impact**: Migration script inserted 750 sweep transactions, fixed VMMXX→VMRXX conversion. Cash validated at $848.63 (exact match to Excel).
 
+## [2026-02-10] EODHD as supplementary price source for UCITS mutual funds
+- **Context**: AIL portfolio has 16 ISINs. 10 are available on Yahoo Finance (US/Canadian stocks + UCITS ETFs). 6 are UCITS mutual funds not on Yahoo — institutional/direct-only funds from Dimensional and AQR.
+- **Alternatives**: (a) Manual NAV entry, (b) EODHD EUFUND virtual exchange, (c) Scrape from fund provider websites
+- **Choice**: (b) — EODHD EUFUND
+- **Rationale**: EODHD provides daily NAV data via a clean REST API. Free tier (20 calls/day) covers 6 funds with headroom. stdlib urllib client, no new dependencies.
+- **Impact**: New eodhd_prices.py client, ISIN_MAP in config.py, source routing in prices.py. 6 EODHD calls/day for daily updates.
+- **Open issue**: Free tier limited to 1 year of history. Transactions go back to May 2024. Snapshots before Feb 2025 have $0 valuations for EODHD holdings. Paid tier ($19.99/mo) removes the limit. Ariel evaluating options.
+
 ## [2026-02-09] Multi-portfolio support with aggregates
 - **Context**: Dashboard assumed a single portfolio. Each CSV import wiped all data globally. Need named persistent portfolios that survive re-imports, plus aggregate portfolios for combined views.
 - **Alternatives**: (a) Keep single portfolio with multi-account support only, (b) Full multi-portfolio with individual + aggregate types

@@ -103,3 +103,20 @@ Final state: 74 tests passing, 0 failing. 8 commits.
 ## 2026-02-09 Session started — Multi-portfolio support
 
 Goal: Named persistent portfolios, scoped imports, aggregate portfolios, management page. 8 phases planned.
+
+## 2026-02-10 Session started — AIL portfolio import
+
+### Completed
+1. **EODHD coverage confirmed**: All 3 previously-missing ISINs (IE00B3V7VL84, IE00BG85LS38, LU1662505954) now on EODHD EUFUND. All 16 AIL ISINs have price sources.
+2. **ISIN_MAP + TickerSource** in config.py: Maps 16 ISINs → (ticker, source). `EODHD_TICKERS` frozenset for routing.
+3. **EODHD price fetcher** (eodhd_prices.py): stdlib urllib client, mirrors yfinance pattern with high-water caching.
+4. **AIL xlsx parser** (parsers.py): `parse_ail_xlsx()` reads xlsx, resolves ISINs, computes 1% fees.
+5. **Source routing** (prices.py): `ensure_prices_for_portfolio` routes EODHD tickers to EODHD API. `fetch_live_prices` uses cached DB prices for EODHD (no real-time). Splits skip EODHD tickers.
+6. **Page updated** (page.py): File uploader accepts xlsx. Detects AIL format, previews, imports with broker="AIL".
+7. **End-to-end verified**: 32 transactions parsed, 30 open lots, prices fetched for all 16 symbols.
+
+### Blocker: EODHD 1-year history limit
+EODHD free tier only provides prices from Feb 2025 onward. AIL transactions go back to May 2024. The 6 EUFUND holdings are valued at $0 for the first 9 months, creating an 85% TWR spike when real prices appear. Attempted carry-backward fix was rejected (fabricated data). Ariel considering options (upgrade to paid tier at $19.99/mo, or alternative data source).
+
+### Decisions
+- See DECISIONS.md for EODHD integration decision.
