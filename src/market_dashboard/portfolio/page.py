@@ -557,7 +557,7 @@ def main():
 
             bond_rows = queries.get_daily_prices(conn, "VGSH", bm_start, bm_end)
             bond_s = pd.Series(
-                {pd.Timestamp(r["price_date"]): r["close"] for r in bond_rows}
+                {pd.Timestamp(r["price_date"]): r["adj_close"] for r in bond_rows}
             ).sort_index() if bond_rows else pd.Series(dtype=float)
 
             for eq_sym, eq_label in (("VOO", "S&P 500"), ("ACWI", "ACWI")):
@@ -566,7 +566,7 @@ def main():
                 if not eq_rows or bond_s.empty:
                     continue
                 eq_s = pd.Series(
-                    {pd.Timestamp(r["price_date"]): r["close"] for r in eq_rows}
+                    {pd.Timestamp(r["price_date"]): r["adj_close"] for r in eq_rows}
                 ).sort_index()
                 common = eq_s.index.intersection(bond_s.index)
                 if len(common) < 2:
