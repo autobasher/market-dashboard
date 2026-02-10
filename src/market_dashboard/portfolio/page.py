@@ -473,11 +473,9 @@ def main():
         else:
             view_df = snap_df
 
-        # Compute metrics for the selected period
+        # Compute portfolio metrics for the selected period
         if not view_df.empty and len(view_df) > 1:
-            # TWR for sub-period: (1 + twr_end) / (1 + twr_start) - 1
             twr_end = float(view_df["twr"].iloc[-1])
-            # Use the snapshot just before the period for the base
             if period_start is not None and not snap_df.empty:
                 before = snap_df[snap_df.index < period_start]
                 twr_base = float(before["twr"].iloc[-1]) if not before.empty else 0.0
@@ -485,14 +483,9 @@ def main():
                 twr_base = 0.0
             total_ret = (1 + twr_end) / (1 + twr_base) - 1
 
-            # CAGR: annualized TWR for the period
             n_days = (view_df.index[-1] - view_df.index[0]).days
-            if n_days > 365:
-                cagr = (1 + total_ret) ** (365.25 / n_days) - 1
-            else:
-                cagr = None  # annualizing < 1 year is misleading
+            cagr = (1 + total_ret) ** (365.25 / n_days) - 1 if n_days > 365 else None
 
-            # XIRR for sub-period: starting value as initial investment + flows + ending value
             period_snaps = [s for s in snapshots if s["snap_date"] >= (period_start or pd.Timestamp.min).strftime("%Y-%m-%d")]
             if period_start is not None and not before.empty:
                 start_value = float(before["total_value"].iloc[-1])
@@ -501,41 +494,16 @@ def main():
             else:
                 xirr_val = metrics.portfolio_xirr(period_snaps, portfolio_value, today)
 
-            # Daily returns for risk metrics
             daily_returns = view_df["twr_growth"].pct_change().dropna()
             sharpe = metrics.sharpe_ratio(daily_returns) if len(daily_returns) > 1 else None
             mdd = metrics.max_drawdown(daily_returns) if len(daily_returns) > 1 else None
             vol = metrics.annual_volatility(daily_returns) if len(daily_returns) > 1 else None
         elif not view_df.empty and len(view_df) == 1:
-            total_ret = cagr = xirr_val = sharpe = mdd = vol = None
+            total_ret = cagr = xirr_val = sharpe = mdd = vol = n_days = None
         else:
-            total_ret = xirr_val = sharpe = mdd = vol = cagr = None
+            total_ret = xirr_val = sharpe = mdd = vol = cagr = n_days = None
 
-        # --- Metrics ---
-        m1, m2, m3, m4, m5, m6 = st.columns([2, 2.5, 3, 3, 1.5, 1.5])
-        m1.metric("Total return (TWR)", f"{total_ret:.1%}" if total_ret is not None else "—")
-        m2.metric("Return, per year (CAGR)", f"{cagr:.1%}" if cagr is not None else "—")
-        m3.metric("Money return, per year (XIRR)", f"{xirr_val:.1%}" if xirr_val is not None else "—")
-        m4.metric("Risk-to-reward (Sharpe ratio)", f"{sharpe:.2f}" if sharpe is not None else "—")
-        m5.metric("Max drawdown", f"{mdd:.1%}" if mdd is not None else "—")
-        m6.metric("Volatility", f"{vol:.1%}" if vol is not None else "—")
-
-    # --- Charts ---
-    if not is_intraday and not view_df.empty:
-        dollar_fmt = "$,.0f"
-        span_days = (view_df.index[-1] - view_df.index[0]).days
-        x_fmt = "%b %Y" if span_days > 180 else "%b %d"
-        x_axis = alt.Axis(format=x_fmt)
-
-        st.subheader("Investment Returns")
-        twr_base = float(view_df["twr"].iloc[0])
-        ret_src = view_df[["twr"]].copy()
-        ret_src["Return"] = (1 + ret_src["twr"]) / (1 + twr_base) - 1
-        ret_src = ret_src.reset_index()
-
-        ret_long = ret_src.rename(columns={"Return": "value"})[["date", "value"]].copy()
-        ret_long["Series"] = "Portfolio"
-
+        # --- Benchmark selector + computation ---
         eq_pct_options = [None] + list(range(10, 101, 10))
         eq_pct = st.selectbox(
             "Equity benchmark",
@@ -545,9 +513,8 @@ def main():
             key=f"eq_benchmark_{portfolio_id}",
         )
 
-        _RET_COLORS = {"Portfolio": "#4a90d9"}
-
-        if eq_pct is not None:
+        benchmarks = []  # list of {name, cum_ret_vals, dates, daily_returns, color}
+        if eq_pct is not None and not view_df.empty and len(view_df) > 1:
             eq_w = eq_pct / 100
             bond_w = 1 - eq_w
             bm_start = view_df.index[0].date()
@@ -560,7 +527,7 @@ def main():
                 {pd.Timestamp(r["price_date"]): r["adj_close"] for r in bond_rows}
             ).sort_index() if bond_rows else pd.Series(dtype=float)
 
-            for eq_sym, eq_label in (("VOO", "S&P 500"), ("ACWI", "ACWI")):
+            for eq_sym, eq_label, color in (("VOO", "S&P 500", "#a05a5a"), ("ACWI", "ACWI", "#5a8a5a")):
                 bm_name = f"{eq_pct}% {eq_label} / {100 - eq_pct}% Cash"
                 eq_rows = queries.get_daily_prices(conn, eq_sym, bm_start, bm_end)
                 if not eq_rows or bond_s.empty:
@@ -582,21 +549,74 @@ def main():
                 for dt, er, br in zip(common, eq_ret, bond_ret):
                     quarter = (dt.year, (dt.month - 1) // 3)
                     if prev_quarter is not None and quarter != prev_quarter:
-                        total = eq_portion + bond_portion
-                        eq_portion = total * eq_w
-                        bond_portion = total * bond_w
+                        total_bm = eq_portion + bond_portion
+                        eq_portion = total_bm * eq_w
+                        bond_portion = total_bm * bond_w
                     eq_portion *= (1 + er)
                     bond_portion *= (1 + br)
                     cum_ret_vals.append(eq_portion + bond_portion - 1)
                     prev_quarter = quarter
 
-                bm_df = pd.DataFrame({
-                    "date": common,
-                    "value": cum_ret_vals,
-                    "Series": bm_name,
+                # Compute benchmark metrics
+                growth = pd.Series(
+                    [1.0] + [1 + v for v in cum_ret_vals], index=[common[0]] + list(common),
+                )
+                bm_daily_ret = growth.pct_change().dropna()
+                bm_total_ret = cum_ret_vals[-1] if cum_ret_vals else None
+                bm_n_days = (common[-1] - common[0]).days
+                bm_cagr = (1 + bm_total_ret) ** (365.25 / bm_n_days) - 1 if bm_total_ret is not None and bm_n_days > 365 else None
+                bm_sharpe = metrics.sharpe_ratio(bm_daily_ret) if len(bm_daily_ret) > 1 else None
+                bm_mdd = metrics.max_drawdown(bm_daily_ret) if len(bm_daily_ret) > 1 else None
+                bm_vol = metrics.annual_volatility(bm_daily_ret) if len(bm_daily_ret) > 1 else None
+
+                benchmarks.append({
+                    "name": bm_name, "dates": common, "cum_ret_vals": cum_ret_vals,
+                    "color": color, "total_ret": bm_total_ret, "cagr": bm_cagr,
+                    "sharpe": bm_sharpe, "mdd": bm_mdd, "vol": bm_vol,
                 })
-                ret_long = pd.concat([ret_long, bm_df], ignore_index=True)
-                _RET_COLORS[bm_name] = "#a05a5a" if eq_sym == "VOO" else "#5a8a5a"
+
+        # --- Metrics display ---
+        def _fmt_pct(v): return f"{v:.1%}" if v is not None else "—"
+        def _fmt_sharpe(v): return f"{v:.2f}" if v is not None else "—"
+
+        m1, m2, m3, m4, m5, m6 = st.columns([2, 2.5, 3, 3, 1.5, 1.5])
+        m1.metric("Total return (TWR)", _fmt_pct(total_ret))
+        m2.metric("Return, per year (CAGR)", _fmt_pct(cagr))
+        m3.metric("Money return, per year (XIRR)", _fmt_pct(xirr_val))
+        m4.metric("Risk-to-reward (Sharpe)", _fmt_sharpe(sharpe))
+        m5.metric("Max drawdown", _fmt_pct(mdd))
+        m6.metric("Volatility", _fmt_pct(vol))
+
+        for bm in benchmarks:
+            m1, m2, m3, m4, m5, m6 = st.columns([2, 2.5, 3, 3, 1.5, 1.5])
+            m1.caption(f"**{bm['name']}**")
+            m2.metric("TWR", _fmt_pct(bm["total_ret"]))
+            m3.metric("CAGR", _fmt_pct(bm["cagr"]))
+            m4.metric("Sharpe", _fmt_sharpe(bm["sharpe"]))
+            m5.metric("Max DD", _fmt_pct(bm["mdd"]))
+            m6.metric("Vol", _fmt_pct(bm["vol"]))
+
+    # --- Charts ---
+    if not is_intraday and not view_df.empty:
+        dollar_fmt = "$,.0f"
+        span_days = (view_df.index[-1] - view_df.index[0]).days
+        x_fmt = "%b %Y" if span_days > 180 else "%b %d"
+        x_axis = alt.Axis(format=x_fmt)
+
+        st.subheader("Investment Returns")
+        twr_base = float(view_df["twr"].iloc[0])
+        ret_src = view_df[["twr"]].copy()
+        ret_src["Return"] = (1 + ret_src["twr"]) / (1 + twr_base) - 1
+        ret_src = ret_src.reset_index()
+
+        ret_long = ret_src.rename(columns={"Return": "value"})[["date", "value"]].copy()
+        ret_long["Series"] = "Portfolio"
+
+        _RET_COLORS = {"Portfolio": "#4a90d9"}
+        for bm in benchmarks:
+            bm_df = pd.DataFrame({"date": bm["dates"], "value": bm["cum_ret_vals"], "Series": bm["name"]})
+            ret_long = pd.concat([ret_long, bm_df], ignore_index=True)
+            _RET_COLORS[bm["name"]] = bm["color"]
 
         _series_order = [s for s in _RET_COLORS if s in ret_long["Series"].unique()]
         ret_chart = (
