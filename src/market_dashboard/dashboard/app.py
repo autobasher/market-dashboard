@@ -56,6 +56,12 @@ def _fmt_pct(v: float | None) -> str:
     return f"{sign}{v:.2f}%"
 
 
+def _composition_tip(line: DashboardLine) -> str:
+    if len(line.tickers) == 1:
+        return line.tickers[0]
+    return ", ".join(f"{int(w*100)}% {t}" for t, w in zip(line.tickers, line.weights))
+
+
 # ---------------------------------------------------------------------------
 # Weighted change computation
 # ---------------------------------------------------------------------------
@@ -112,7 +118,7 @@ def _render_section(sec_key: str, title: str, rows: list[dict]) -> str:
     for r in rows:
         html += (
             f'<tr>'
-            f'<td class="md-label">{r["label"]}</td>'
+            f'<td class="md-label" title="{r["tip"]}">{r["label"]}</td>'
             f'<td class="md-pct" style="{_cell_bg(r["pct"])}">{_fmt_pct(r["pct"])}</td>'
             f'</tr>'
         )
@@ -171,6 +177,7 @@ _CSS = """
 .md tbody td.md-label {
     font-weight: 400;
     padding-right: 2rem;
+    cursor: help;
 }
 .md tbody td.md-pct {
     text-align: right;
@@ -235,6 +242,7 @@ def main():
             section_rows.setdefault(line.section, []).append({
                 "label": line.label,
                 "pct": pct,
+                "tip": _composition_tip(line),
             })
 
         st.markdown(_render_grid(section_rows), unsafe_allow_html=True)
