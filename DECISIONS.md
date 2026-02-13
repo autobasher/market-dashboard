@@ -38,6 +38,13 @@ Format: Date, context, alternatives considered, choice, rationale, impact.
 - **Impact**: New eodhd_prices.py client, ISIN_MAP in config.py, source routing in prices.py. 6 EODHD calls/day for daily updates.
 - **Open issue**: Free tier limited to 1 year of history. Transactions go back to May 2024. Snapshots before Feb 2025 have $0 valuations for EODHD holdings. Paid tier ($19.99/mo) removes the limit. Ariel evaluating options.
 
+## [2026-02-13] Split into cloud (market grid only) and local (full app) deployments
+- **Context**: Single Streamlit app deployed to `factordashboard.streamlit.app` exposes portfolio pages (sensitive financial data) publicly. Ariel wants the market grid public and portfolio private.
+- **Alternatives**: (a) Authentication/password on portfolio pages, (b) Two separate repos, (c) Single repo with two entry points
+- **Choice**: (c) — single repo, two entry points. Cloud uses `streamlit_app.py` at repo root (sees no `pages/`). Local uses `local/local_app.py` (Streamlit finds `local/pages/`).
+- **Rationale**: No code duplication. Streamlit discovers pages relative to the main script's directory, so relocating page stubs is sufficient. No auth complexity.
+- **Impact**: Portfolio pages moved to `local/pages/`, new `local/launch.bat` for local use, `ports.json` updated to port 4006. Cloud deploy shows market grid only after next push.
+
 ## [2026-02-09] Multi-portfolio support with aggregates
 - **Context**: Dashboard assumed a single portfolio. Each CSV import wiped all data globally. Need named persistent portfolios that survive re-imports, plus aggregate portfolios for combined views.
 - **Alternatives**: (a) Keep single portfolio with multi-account support only, (b) Full multi-portfolio with individual + aggregate types

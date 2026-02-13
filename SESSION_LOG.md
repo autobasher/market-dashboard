@@ -104,6 +104,20 @@ Final state: 74 tests passing, 0 failing. 8 commits.
 
 Goal: Named persistent portfolios, scoped imports, aggregate portfolios, management page. 8 phases planned.
 
+## 2026-02-13 Session started — Split cloud/local deployments
+
+Goal: Remove portfolio pages from cloud deployment, keep them local-only.
+
+### Completed
+1. Created `local/local_app.py` — local entry point that Streamlit uses to find `local/pages/`
+2. Created `local/launch.bat` — double-click launcher, opens browser at localhost:4006
+3. Moved `pages/*.py` to `local/pages/*.py`, fixed sys.path (one extra `.parent`)
+4. Updated `ports.json` start command for port 4006
+5. Cloud entry point (`streamlit_app.py`) unchanged — no `pages/` directory at root means no sidebar
+
+### Decision
+- See DECISIONS.md: "Split into cloud and local deployments"
+
 ## 2026-02-10 Session started — AIL portfolio import
 
 ### Completed
