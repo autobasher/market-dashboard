@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from market_dashboard.config import MONEY_MARKET_TICKERS
 from market_dashboard.portfolio import queries
 from market_dashboard.portfolio.models import TxType
 
@@ -104,6 +105,8 @@ def build_daily_snapshots(
     all_symbols = list({tx["symbol"] for tx in all_txs if tx["symbol"]})
     prices_by_sym: dict[str, dict[str, float]] = {}
     for sym in all_symbols:
+        if sym in MONEY_MARKET_TICKERS:
+            continue  # money market funds always valued at $1/share
         rows = queries.get_daily_prices(conn, sym, first_date, snap_end)
         prices_by_sym[sym] = {r["price_date"]: r["close"] for r in rows}
 
@@ -118,6 +121,11 @@ def build_daily_snapshots(
     vmfxx_balance = 0.0                # settlement fund balance from sweeps + VMFXX DRIPs
     net_deposits = 0.0                 # cumulative external cash flows
     last_price: dict[str, float] = {}  # symbol -> last known actual (unadjusted) close
+
+    # Money market funds: always $1/share NAV
+    for sym in all_symbols:
+        if sym in MONEY_MARKET_TICKERS:
+            last_price[sym] = 1.0
     prev_total_value = 0.0
     cumulative_twr = 0.0
     tx_idx = 0

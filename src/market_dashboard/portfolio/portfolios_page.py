@@ -29,7 +29,7 @@ def _list_portfolios(conn):
             "Details": detail,
             "Created": p["created_at"],
         })
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _create_aggregate_section(conn):

@@ -59,7 +59,7 @@ def _render_transaction_table(conn, account_ids: list[str]):
         "Price", "Amount", "Fees", "Description",
     ]
 
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, width="stretch", hide_index=True)
     return df
 
 

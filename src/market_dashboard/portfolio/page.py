@@ -256,7 +256,7 @@ def _import_section(conn):
                     )
                     show_cols = [c for c in ["Date", "ISIN", "Quantity", "Price", "Type"] if c in preview_df.columns]
                     st.caption(f"Found {len(preview_df)} transactions:")
-                    st.dataframe(preview_df[show_cols], use_container_width=True, hide_index=True)
+                    st.dataframe(preview_df[show_cols], width="stretch", hide_index=True)
                 except Exception:
                     st.warning("Could not read xlsx — expected a 'transactions' sheet.")
                     xlsx_bytes = None
@@ -266,7 +266,7 @@ def _import_section(conn):
                 if csv_text:
                     preview_df = pd.read_csv(io.StringIO(csv_text), dtype=str)
                     st.caption(f"Converted {len(preview_df)} transactions from PDF:")
-                    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                    st.dataframe(preview_df, width="stretch", hide_index=True)
                 else:
                     st.warning("No transactions found in PDF.")
             else:
@@ -658,7 +658,7 @@ def main():
                 ],
             ).interactive()
         )
-        st.altair_chart(ret_chart, use_container_width=True)
+        st.altair_chart(ret_chart, width="stretch")
 
         st.subheader("Balances")
         bal_src = view_df[["total_value", "total_cost"]].rename(
@@ -677,7 +677,7 @@ def main():
                 ],
             ).interactive()
         )
-        st.altair_chart(bal_chart, use_container_width=True)
+        st.altair_chart(bal_chart, width="stretch")
 
     # --- Allocation donut chart ---
 
@@ -766,7 +766,7 @@ def main():
             text="text_left:N", **lbl_enc,
         )
         chart = (pie + text_r + text_l).properties(height=400)
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, width="stretch")
     else:
         st.info("No allocation data.")
 
@@ -805,7 +805,7 @@ def main():
         pos_df = pd.DataFrame(rows).sort_values("Market Value", ascending=False)
         for col in ["Market Value", "Cost Basis", "Gain/Loss"]:
             pos_df[col] = pos_df[col].apply(lambda x: f"${x:,.2f}")
-        st.dataframe(pos_df, use_container_width=True, hide_index=True)
+        st.dataframe(pos_df, width="stretch", hide_index=True)
     else:
         st.info("No open positions.")
 

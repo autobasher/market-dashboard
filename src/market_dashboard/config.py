@@ -129,31 +129,40 @@ CLASS_BASE_COLORS: dict[str, tuple[int, int, int]] = {
 class TickerSource(NamedTuple):
     ticker: str
     source: str  # "yahoo" or "eodhd"
+    name: str = ""
 
 
 ISIN_MAP: dict[str, TickerSource] = {
-    # Yahoo Finance (10)
-    "US68989M1036": TickerSource("OUST", "yahoo"),
-    "US76954A1034": TickerSource("RIVN", "yahoo"),
-    "CA85210A1049": TickerSource("U-UN.TO", "yahoo"),
-    "IE00B1FZSC47": TickerSource("IDTP.L", "yahoo"),
-    "IE00BZ0G8977": TickerSource("TIPS.L", "yahoo"),
-    "IE00BZ163L38": TickerSource("VDET.L", "yahoo"),
-    "IE00BJRCLL96": TickerSource("JPGL.L", "yahoo"),
-    "IE00BMGNVD65": TickerSource("AGUG.AS", "yahoo"),
-    "IE0003R87OG3": TickerSource("AVGS.L", "yahoo"),
-    "IE00B3B8PX14": TickerSource("IGIL.L", "yahoo"),
-    # EODHD EUFUND (6)
-    "IE00B0HCGS80": TickerSource("IE00B0HCGS80.EUFUND", "eodhd"),
-    "IE00B2PC0609": TickerSource("IE00B2PC0609.EUFUND", "eodhd"),
-    "LU1103257975": TickerSource("LU1103257975.EUFUND", "eodhd"),
-    "IE00B3V7VL84": TickerSource("IE00B3V7VL84.EUFUND", "eodhd"),
-    "IE00BG85LS38": TickerSource("IE00BG85LS38.EUFUND", "eodhd"),
-    "LU1662505954": TickerSource("LU1662505954.EUFUND", "eodhd"),
+    # Yahoo Finance — stocks (2)
+    "US68989M1036": TickerSource("OUST", "yahoo", "Ouster Inc"),
+    "US76954A1034": TickerSource("RIVN", "yahoo", "Rivian Automotive Inc"),
+    # Yahoo Finance — trusts & ETFs (8)
+    "CA85210A1049": TickerSource("U-UN.TO", "yahoo", "Sprott Physical Uranium Trust"),
+    "IE00B1FZSC47": TickerSource("IDTP.L", "yahoo", "iShares USD TIPS UCITS ETF (Acc)"),
+    "IE00BZ0G8977": TickerSource("TIPS.L", "yahoo", "SPDR Bloomberg US TIPS UCITS ETF (Dist)"),
+    "IE00BZ163L38": TickerSource("VDET.L", "yahoo", "Vanguard USD EM Government Bond UCITS ETF (Dist)"),
+    "IE00BJRCLL96": TickerSource("JPGL.L", "yahoo", "JPMorgan Global Equity Multi-Factor UCITS ETF (Acc)"),
+    "IE00BMGNVD65": TickerSource("AGUG.AS", "yahoo", "iShares Core Global Aggregate Bond UCITS ETF USD Hedged (Dist)"),
+    "IE0003R87OG3": TickerSource("AVGS.L", "yahoo", "Avantis Global Small Cap Value UCITS ETF (Acc)"),
+    "IE00B3B8PX14": TickerSource("IGIL.L", "yahoo", "iShares Global Inflation Linked Govt Bond UCITS ETF (Acc)"),
+    # EODHD — Dimensional mutual funds (4)
+    "IE00B0HCGS80": TickerSource("IE00B0HCGS80.EUFUND", "eodhd", "Dimensional Emerging Markets Value Fund"),
+    "IE00B2PC0609": TickerSource("IE00B2PC0609.EUFUND", "eodhd", "Dimensional Global Targeted Value Fund"),
+    "IE00B3V7VL84": TickerSource("IE00B3V7VL84.EUFUND", "eodhd", "Dimensional World Equity Fund"),
+    "IE00BG85LS38": TickerSource("IE00BG85LS38.EUFUND", "eodhd", "Dimensional Global Core Fixed Income Fund"),
+    # EODHD — AQR mutual funds (2)
+    "LU1103257975": TickerSource("LU1103257975.EUFUND", "eodhd", "AQR Managed Futures UCITS Fund"),
+    "LU1662505954": TickerSource("LU1662505954.EUFUND", "eodhd", "AQR Style Premia UCITS Fund"),
 }
 
 EODHD_TICKERS: frozenset[str] = frozenset(
     ts.ticker for ts in ISIN_MAP.values() if ts.source == "eodhd"
+)
+
+# Money market funds: always valued at $1/share NAV. yfinance returns
+# bogus "close" prices ($26-$68) for these, corrupting valuations.
+MONEY_MARKET_TICKERS: frozenset[str] = frozenset(
+    {"VMFXX", "VMMXX", "VMRXX", "VYFXX"}
 )
 
 

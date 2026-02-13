@@ -7,7 +7,7 @@ from datetime import date
 import pandas as pd
 import yfinance as yf
 
-from market_dashboard.config import EODHD_TICKERS
+from market_dashboard.config import EODHD_TICKERS, MONEY_MARKET_TICKERS
 from market_dashboard.portfolio import queries
 from market_dashboard.portfolio.eodhd_prices import fetch_eodhd_prices
 from market_dashboard.portfolio.models import TxType
@@ -164,10 +164,11 @@ def fetch_live_prices(
         return {}
 
     prices: dict[str, float] = {}
-    if "VMFXX" in symbols:
-        prices["VMFXX"] = 1.0
+    for sym in symbols:
+        if sym in MONEY_MARKET_TICKERS:
+            prices[sym] = 1.0
 
-    non_cash = [s for s in symbols if s != "VMFXX"]
+    non_cash = [s for s in symbols if s not in MONEY_MARKET_TICKERS]
     eodhd_syms = [s for s in non_cash if s in EODHD_TICKERS]
     yahoo_syms = [s for s in non_cash if s not in EODHD_TICKERS]
 
@@ -195,7 +196,9 @@ def ensure_prices_for_portfolio(
     """Fetch/cache prices for all symbols. Returns {symbol: rows_inserted}."""
     results = {}
     for sym in symbols:
-        if sym in EODHD_TICKERS:
+        if sym in MONEY_MARKET_TICKERS:
+            continue  # money market funds: always $1/share, no price fetch needed
+        elif sym in EODHD_TICKERS:
             results[sym] = fetch_eodhd_prices(conn, sym, start, end)
         else:
             results[sym] = fetch_historical_prices(conn, sym, start, end)
