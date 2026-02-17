@@ -36,3 +36,22 @@ def get_all_quotes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT symbol, price, change_pct, market_time FROM latest_quotes ORDER BY symbol"
     ).fetchall()
+
+
+def get_reference_closes(
+    conn: sqlite3.Connection,
+    symbols: list[str],
+    target_date: str,
+) -> dict[str, float]:
+    """Get the latest close on or before target_date for each symbol."""
+    result: dict[str, float] = {}
+    for sym in symbols:
+        row = conn.execute(
+            "SELECT close FROM historical_prices "
+            "WHERE symbol = ? AND price_date <= ? "
+            "ORDER BY price_date DESC LIMIT 1",
+            (sym, target_date),
+        ).fetchone()
+        if row is not None:
+            result[sym] = row["close"]
+    return result
