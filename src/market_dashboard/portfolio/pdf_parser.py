@@ -30,7 +30,7 @@ _BASE_TX_TYPES = [
 ]
 
 # Types that can have a parenthetical suffix on a continuation line
-_SUFFIXED_BASES = {"Transfer", "Corp Action", "Conversion", "Merger"}
+_SUFFIXED_BASES = {"Transfer", "Corp Action", "Conversion", "Merger", "Rollover"}
 
 # Money pattern: optional minus, $, digits with commas, decimal
 _MONEY_RE = re.compile(r"-?\$[\d,]+\.\d{2,4}")

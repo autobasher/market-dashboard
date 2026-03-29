@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv as csv_mod
 import io
 import tempfile
+from dataclasses import replace
 from datetime import date, timedelta
 
 from dateutil.relativedelta import relativedelta
@@ -54,10 +55,11 @@ def _store_csv(conn, filename: str, content: bytes, account_id: str, account_nam
 def _do_import(conn, portfolio_name: str, csv_text: str | None = None,
                txs=None, broker: str = "Vanguard"):
     """Parse transactions, wipe old data for this portfolio, and rebuild."""
-    account_id = portfolio_name.lower().replace(" ", "-")
+    skipped_types: set[str] = set()
 
     if txs is None:
-        txs = parse_vanguard_csv(io.StringIO(csv_text), account_id)
+        derived_id = portfolio_name.lower().replace(" ", "-")
+        txs, skipped_types = parse_vanguard_csv(io.StringIO(csv_text), derived_id)
     if not txs:
         st.warning("No transactions found.")
         return
@@ -66,11 +68,20 @@ def _do_import(conn, portfolio_name: str, csv_text: str | None = None,
     existing = queries.get_portfolio_by_name(conn, portfolio_name)
     if existing:
         portfolio_id = existing["portfolio_id"]
+        accts = queries.get_portfolio_accounts(conn, portfolio_id)
+        account_id = accts[0]["account_id"]
         _wipe_account_data(conn, account_id, portfolio_id)
     else:
+        account_id = portfolio_name.lower().replace(" ", "-")
         queries.insert_account(conn, account_id, portfolio_name, broker)
         portfolio_id = queries.insert_portfolio(conn, portfolio_name)
         queries.add_account_to_portfolio(conn, portfolio_id, account_id)
+
+    # Re-stamp transactions with the canonical account_id from the DB
+    txs = [replace(tx, account_id=account_id) for tx in txs]
+
+    if skipped_types:
+        st.warning(f"Skipped {len(skipped_types)} unrecognized transaction type(s): {', '.join(sorted(skipped_types))}")
 
     for tx in txs:
         queries.insert_transaction(
@@ -225,7 +236,14 @@ def _import_section(conn):
             portfolio_name = selected
 
         # Show current file info if existing portfolio
-        account_id = portfolio_name.lower().replace(" ", "-") if portfolio_name else ""
+        account_id = ""
+        if portfolio_name:
+            existing_p = queries.get_portfolio_by_name(conn, portfolio_name)
+            if existing_p:
+                accts = queries.get_portfolio_accounts(conn, existing_p["portfolio_id"])
+                account_id = accts[0]["account_id"] if accts else ""
+            else:
+                account_id = portfolio_name.lower().replace(" ", "-")
         stored = queries.get_stored_csv(conn, account_id) if account_id else None
         if stored:
             col_info, col_dl = st.columns([3, 1])

@@ -32,6 +32,14 @@ _VANGUARD_TX_MAP = {
     "Stock split": TxType.SPLIT,
     "Sweep in": TxType.SWEEP_IN,
     "Sweep out": TxType.SWEEP_OUT,
+    "Rollover (incoming)": TxType.TRANSFER_IN,
+    "Rollover (outgoing)": TxType.TRANSFER_OUT,
+    "Rollover (Incoming)": TxType.TRANSFER_IN,
+    "Rollover (Outgoing)": TxType.TRANSFER_OUT,
+    "Distribution": TxType.DIVIDEND,
+    "Interest": TxType.DIVIDEND,
+    "Funds Received": TxType.TRANSFER_IN,
+    "Withdrawal": TxType.TRANSFER_OUT,
 }
 
 
@@ -59,16 +67,20 @@ def _money(val: str) -> float:
 def parse_vanguard_csv(
     file_path: Path | str | io.StringIO,
     account_id: str,
-) -> list[Transaction]:
+) -> tuple[list[Transaction], set[str]]:
     """Parse a Vanguard brokerage CSV into Transaction objects.
 
     Handles both the official Vanguard export format and the simplified format
     from the PDF parser.
+
+    Returns (transactions, skipped_types) where skipped_types contains any
+    unrecognized transaction type strings that were encountered and skipped.
     """
     df = pd.read_csv(file_path, dtype=str)
     df.columns = df.columns.str.strip()
 
     transactions: list[Transaction] = []
+    skipped_types: set[str] = set()
     source = str(file_path) if not isinstance(file_path, io.StringIO) else "<stream>"
 
     for _, row in df.iterrows():
@@ -112,7 +124,16 @@ def parse_vanguard_csv(
         else:
             tx_type = _VANGUARD_TX_MAP.get(raw_type)
             if tx_type is None:
-                continue  # skip unrecognized types
+                if raw_type:
+                    skipped_types.add(raw_type)
+                    logger.warning("Skipping unrecognized Vanguard tx type: %s", raw_type)
+                continue
+
+        # Negative-amount distribution/interest with no symbol = cash leaving
+        # (e.g. taxable distributions paid out, not reinvested)
+        if tx_type == TxType.DIVIDEND and total_amount < 0 and not symbol:
+            tx_type = TxType.TRANSFER_OUT
+            total_amount = abs(total_amount)
 
         transactions.append(Transaction(
             tx_id=None,
@@ -130,7 +151,7 @@ def parse_vanguard_csv(
             source_file=source,
         ))
 
-    return transactions
+    return transactions, skipped_types
 
 
 _AIL_TX_MAP = {"Buy": TxType.BUY, "Sell": TxType.SELL}

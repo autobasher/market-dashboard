@@ -113,6 +113,13 @@ def build_daily_snapshots(
     # Build split factors to reverse yfinance's split adjustment
     split_factors = _build_split_factors(all_txs)
 
+    # Check for cost_basis_start override (e.g. transferred-in portfolios with unknown cost basis)
+    row = conn.execute(
+        "SELECT cost_basis_start FROM portfolios WHERE portfolio_id = ?",
+        (portfolio_id,),
+    ).fetchone()
+    cost_basis_start = row["cost_basis_start"] if row and row["cost_basis_start"] is not None else None
+
     # Always rebuild from the beginning for correct TWR and net deposits
     queries.delete_snapshots_from(conn, portfolio_id, first_date)
 
@@ -120,6 +127,7 @@ def build_daily_snapshots(
     positions: dict[str, float] = {}   # symbol -> shares held
     vmfxx_balance = 0.0                # settlement fund balance from sweeps + VMFXX DRIPs
     net_deposits = 0.0                 # cumulative external cash flows
+    is_first_day = True
     last_price: dict[str, float] = {}  # symbol -> last known actual (unadjusted) close
 
     # Money market funds: always $1/share NAV
@@ -211,6 +219,13 @@ def build_daily_snapshots(
         # 5. Derive external cash flow and update net deposits
         external_cf = total_value - pre_tx_value - investment_income
         net_deposits += external_cf
+
+        # Override net deposits on first day if cost_basis_start is set
+        if is_first_day and cost_basis_start is not None:
+            net_deposits = cost_basis_start
+            is_first_day = False
+        elif is_first_day:
+            is_first_day = False
 
         # 6. Compute daily TWR
         if prev_total_value > 0:
