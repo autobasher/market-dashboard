@@ -59,7 +59,7 @@ portfolio_id = portfolio["portfolio_id"]
 
 # --- Date pickers ---
 col1, col2, col3 = st.columns([1, 1, 2])
-start_date = col1.date_input("Start date", value=date(2025, 2, 28), key="te_start")
+start_date = col1.date_input("Start date", value=date(2026, 2, 28), key="te_start")
 end_date = col2.date_input("End date", value=date.today(), key="te_end")
 
 if start_date >= end_date:

@@ -115,14 +115,17 @@ def build_whatif_series(
             post_splits.append((tx_date, tx["symbol"], tx["split_ratio"] or 1.0))
     post_splits.sort()
 
-    # Load prices for held symbols
+    # Load prices for held symbols — start 7 days early so weekends/holidays
+    # have a last_price available on the first output day
+    price_lookback = start - timedelta(days=7)
     prices_by_sym: dict[str, dict[str, float]] = {}
     for sym in held_symbols:
-        rows = queries.get_daily_prices(conn, sym, start, end)
+        rows = queries.get_daily_prices(conn, sym, price_lookback, end)
         prices_by_sym[sym] = {r["price_date"]: r["close"] for r in rows}
 
-    # Day-by-day valuation
-    current = start
+    # Day-by-day valuation — run from lookback to seed last_price,
+    # but only emit rows from start onward
+    current = price_lookback
     start_value: float | None = None
     last_price: dict[str, float] = {}
     last_price_date: dict[str, date] = {}
@@ -166,16 +169,18 @@ def build_whatif_series(
         cash = max(vmfxx_balance, 0.0)
         hold_value = equity + cash
 
-        if start_value is None:
-            start_value = hold_value
+        # Only emit rows from the requested start date onward
+        if current >= start:
+            if start_value is None:
+                start_value = hold_value
 
-        hold_return = (hold_value / start_value - 1) if start_value > 0 else 0.0
+            hold_return = (hold_value / start_value - 1) if start_value > 0 else 0.0
 
-        rows_out.append({
-            "date": current,
-            "hold_value": hold_value,
-            "hold_return": hold_return,
-        })
+            rows_out.append({
+                "date": current,
+                "hold_value": hold_value,
+                "hold_return": hold_return,
+            })
 
         current += timedelta(days=1)
 
