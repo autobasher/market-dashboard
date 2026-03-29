@@ -9,6 +9,10 @@ from market_dashboard.config import MONEY_MARKET_TICKERS
 from market_dashboard.portfolio import queries
 from market_dashboard.portfolio.models import TxType
 
+# Positions with no price update in this many calendar days are valued at $0
+# (handles delisted tickers whose last cached price would otherwise persist forever)
+_STALE_PRICE_DAYS = 45
+
 
 def _build_split_factors(all_txs: list) -> dict[str, list[tuple[str, float]]]:
     """Build per-symbol date intervals for reversing yfinance's split adjustment.
@@ -129,6 +133,7 @@ def build_daily_snapshots(
     net_deposits = 0.0                 # cumulative external cash flows
     is_first_day = True
     last_price: dict[str, float] = {}  # symbol -> last known actual (unadjusted) close
+    last_price_date: dict[str, date] = {}  # symbol -> date of last real price update
 
     # Money market funds: always $1/share NAV
     for sym in all_symbols:
@@ -150,6 +155,9 @@ def build_daily_snapshots(
         for sym, held in positions.items():
             if held <= 0:
                 continue
+            stale = (current - last_price_date.get(sym, current)).days > _STALE_PRICE_DAYS
+            if stale:
+                continue  # delisted / no recent price — value at $0
             if sym in prices_by_sym and date_str in prices_by_sym[sym]:
                 raw = prices_by_sym[sym][date_str]
                 factor = _unadjust_factor(split_factors, sym, prev_date_str)
@@ -164,6 +172,7 @@ def build_daily_snapshots(
                 raw = prices_by_sym[sym][date_str]
                 factor = _unadjust_factor(split_factors, sym, date_str)
                 last_price[sym] = raw * factor
+                last_price_date[sym] = current
 
         # 3. Process all transactions on or before this date
         investment_income = 0.0  # dividends (positive) + fees (negative)
@@ -209,8 +218,11 @@ def build_daily_snapshots(
             tx_idx += 1
 
         # 4. Compute today's total value
+        #    Zero out symbols with no price update in >45 days (likely delisted)
         equity_value = sum(
-            held * last_price.get(sym, 0.0)
+            held * (last_price.get(sym, 0.0)
+                    if (current - last_price_date.get(sym, current)).days <= _STALE_PRICE_DAYS
+                    else 0.0)
             for sym, held in positions.items() if held > 0
         )
         cash = max(vmfxx_balance, 0.0)  # clamp FP dust
