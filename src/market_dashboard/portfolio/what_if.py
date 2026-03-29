@@ -44,6 +44,7 @@ def get_positions_as_of(
 
     positions: dict[str, float] = {}
     vmfxx_balance = 0.0
+    seen_splits: set[tuple] = set()
 
     for tx in all_txs:
         tx_type = tx["tx_type"]
@@ -70,7 +71,11 @@ def get_positions_as_of(
                 positions[symbol] = positions.get(symbol, 0.0) - shares
         elif tx_type == TxType.SPLIT.value:
             ratio = tx["split_ratio"] or 1.0
-            if symbol and symbol in positions:
+            # Deduplicate splits: same symbol+date+ratio from different accounts
+            # is the same corporate action, not two separate splits
+            split_key = (symbol, tx["trade_date"], ratio)
+            if symbol and symbol in positions and split_key not in seen_splits:
+                seen_splits.add(split_key)
                 positions[symbol] *= ratio
 
     # Drop zero/negative positions (threshold handles FP dust)
@@ -103,16 +108,32 @@ def build_whatif_series(
         all_txs.extend(queries.get_transactions(conn, account_id=acct_id))
     all_txs.sort(key=lambda t: (t["trade_date"], t["tx_id"]))
 
-    split_factors = _build_split_factors(all_txs)
+    # Deduplicate split transactions before building factors — aggregates
+    # have the same corporate action recorded once per member account
+    seen = set()
+    deduped_txs = []
+    for tx in all_txs:
+        if tx["tx_type"] == TxType.SPLIT.value and tx["split_ratio"]:
+            key = (tx["symbol"], tx["trade_date"], tx["split_ratio"])
+            if key in seen:
+                continue
+            seen.add(key)
+        deduped_txs.append(tx)
+    split_factors = _build_split_factors(deduped_txs)
 
     # Collect post-start splits to apply to frozen positions
+    # Deduplicate: same (date, symbol, ratio) from different accounts is one corporate action
+    post_split_set: set[tuple[date, str, float]] = set()
     post_splits: list[tuple[date, str, float]] = []
     for tx in all_txs:
         if tx["tx_type"] != TxType.SPLIT.value:
             continue
+        ratio = tx["split_ratio"] or 1.0
         tx_date = date.fromisoformat(tx["trade_date"])
-        if tx_date > start and tx_date <= end and tx["symbol"] in positions:
-            post_splits.append((tx_date, tx["symbol"], tx["split_ratio"] or 1.0))
+        key = (tx_date, tx["symbol"], ratio)
+        if tx_date > start and tx_date <= end and tx["symbol"] in positions and key not in post_split_set:
+            post_split_set.add(key)
+            post_splits.append(key)
     post_splits.sort()
 
     # Load prices for held symbols — start 7 days early so weekends/holidays
