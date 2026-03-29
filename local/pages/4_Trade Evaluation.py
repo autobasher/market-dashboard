@@ -123,10 +123,14 @@ actual_return = snap_df["actual_return"].iloc[-1]
 hold_return = whatif_df["hold_return"].iloc[-1]
 alpha = actual_return - hold_return
 
-m1, m2, m3 = st.columns(3)
+start_value = snap_df["total_value"].iloc[0]
+dollar_alpha = start_value * alpha
+
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("Actual TWR", f"{actual_return:+.2%}")
 m2.metric("Hold Return", f"{hold_return:+.2%}")
-m3.metric("Alpha (Actual − Hold)", f"{alpha:+.2%}", delta=f"{alpha:+.2%}")
+m3.metric("Alpha", f"{alpha:+.2%}", delta=f"{alpha:+.2%}")
+m4.metric("Dollar Alpha", f"${dollar_alpha:+,.0f}", delta=f"${dollar_alpha:+,.0f}")
 
 # --- Chart ---
 # Build long-form DataFrame for Altair
