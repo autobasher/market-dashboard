@@ -53,9 +53,26 @@ selected = [p for p in individual_portfolios if p["name"] in built]
 if not selected:
     st.stop()
 
-# For now, use first selected portfolio (single-portfolio analysis)
-portfolio = selected[0]
-portfolio_id = portfolio["portfolio_id"]
+# Resolve portfolio_id — single or aggregate (same pattern as Performance page)
+if len(selected) == 1:
+    portfolio_id = selected[0]["portfolio_id"]
+else:
+    # Find existing aggregate with exactly these members, or create one
+    member_ids = sorted(p["portfolio_id"] for p in selected)
+    target = set(member_ids)
+    portfolio_id = None
+    candidates = queries.get_aggregates_containing(conn, member_ids[0])
+    for agg in candidates:
+        members = queries.get_aggregate_members(conn, agg["portfolio_id"])
+        if {m["portfolio_id"] for m in members} == target:
+            portfolio_id = agg["portfolio_id"]
+            break
+    if portfolio_id is None:
+        name = " + ".join(p["name"] for p in selected)
+        portfolio_id = queries.insert_portfolio(conn, name, is_aggregate=True)
+        for mid in member_ids:
+            queries.add_aggregate_member(conn, portfolio_id, mid)
+        conn.commit()
 
 # --- Date pickers ---
 col1, col2, col3 = st.columns([1, 1, 2])
