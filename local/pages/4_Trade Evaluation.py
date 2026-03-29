@@ -123,8 +123,11 @@ actual_return = snap_df["actual_return"].iloc[-1]
 hold_return = whatif_df["hold_return"].iloc[-1]
 alpha = actual_return - hold_return
 
-start_value = snap_df["total_value"].iloc[0]
-dollar_alpha = start_value * alpha
+# Dollar alpha: endpoint diff minus net external flows
+actual_end = snap_df["total_value"].iloc[-1]
+hold_end = whatif_df["hold_value"].iloc[-1]
+net_ext_flows = snap_df["total_cost"].iloc[-1] - snap_df["total_cost"].iloc[0]
+dollar_alpha = actual_end - hold_end - net_ext_flows
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Actual TWR", f"{actual_return:+.2%}")
