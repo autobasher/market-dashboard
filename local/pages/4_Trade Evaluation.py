@@ -124,7 +124,7 @@ if evaluate_clicked:
         "snap_df": snap_df,
         "start_date": start_date,
         "end_date": end_date,
-        "portfolio_name": portfolio["name"],
+        "portfolio_name": " + ".join(p["name"] for p in selected),
     }
 
 # --- Display results ---
