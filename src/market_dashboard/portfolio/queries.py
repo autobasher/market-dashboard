@@ -431,29 +431,33 @@ def delete_snapshots_from(
 def get_all_open_lots(
     conn: sqlite3.Connection, account_ids: list[str]
 ) -> list[sqlite3.Row]:
-    all_lots = []
-    for acct_id in account_ids:
-        rows = conn.execute(
-            "SELECT * FROM lots WHERE account_id = ? AND shares_remaining > 0",
-            (acct_id,),
-        ).fetchall()
-        all_lots.extend(rows)
-    return all_lots
+    if not account_ids:
+        return []
+    placeholders = ",".join("?" * len(account_ids))
+    return conn.execute(
+        f"SELECT * FROM lots WHERE account_id IN ({placeholders}) AND shares_remaining > 0",
+        account_ids,
+    ).fetchall()
 
 
 def get_latest_prices(
     conn: sqlite3.Connection, symbols: list[str]
 ) -> dict[str, float]:
-    prices = {}
-    for sym in symbols:
-        row = conn.execute(
-            "SELECT close FROM historical_prices "
-            "WHERE symbol = ? ORDER BY price_date DESC LIMIT 1",
-            (sym,),
-        ).fetchone()
-        if row:
-            prices[sym] = row["close"]
-    return prices
+    if not symbols:
+        return {}
+    placeholders = ",".join("?" * len(symbols))
+    rows = conn.execute(
+        f"SELECT hp.symbol, hp.close "
+        f"FROM historical_prices hp "
+        f"INNER JOIN ("
+        f"  SELECT symbol, MAX(price_date) AS best_date "
+        f"  FROM historical_prices "
+        f"  WHERE symbol IN ({placeholders}) "
+        f"  GROUP BY symbol"
+        f") best ON hp.symbol = best.symbol AND hp.price_date = best.best_date",
+        symbols,
+    ).fetchall()
+    return {r["symbol"]: r["close"] for r in rows}
 
 
 def get_default_portfolio_id(conn: sqlite3.Connection) -> int | None:

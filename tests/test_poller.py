@@ -44,12 +44,13 @@ def test_poll_writes_to_db(mock_yf, in_memory_db):
     from market_dashboard.poller import QuotePoller
 
     mock_ticker = MagicMock()
-    mock_ticker.info = {
-        "regularMarketPrice": 100.0,
-        "regularMarketChangePercent": 1.5,
-        "regularMarketTime": 1738857600,
+    mock_ticker.fast_info = {
+        "lastPrice": 100.0,
+        "previousClose": 98.5,
     }
-    mock_yf.Ticker.return_value = mock_ticker
+    mock_tickers_obj = MagicMock()
+    mock_tickers_obj.tickers = {sym: mock_ticker for sym in Settings().all_symbols}
+    mock_yf.Tickers.return_value = mock_tickers_obj
 
     settings = Settings(db_path=":memory:")
     wrapper = _NoCloseConn(in_memory_db)

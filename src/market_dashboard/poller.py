@@ -47,27 +47,23 @@ class QuotePoller:
         logger.info("Polling %d symbols", len(symbols))
 
         fetched = []
-        for sym in symbols:
-            try:
-                info = yf.Ticker(sym).info
-                price = info.get("regularMarketPrice")
-                change_pct = info.get("regularMarketChangePercent")
-                market_time = info.get("regularMarketTime")
-
-                if price is None:
-                    logger.debug("No price for %s", sym)
-                    continue
-
-                if market_time:
-                    mt_str = datetime.fromtimestamp(
-                        market_time, tz=timezone.utc
-                    ).isoformat()
-                else:
+        try:
+            tickers_obj = yf.Tickers(" ".join(symbols))
+            for sym in symbols:
+                try:
+                    fi = tickers_obj.tickers[sym].fast_info
+                    price = fi.get("lastPrice") or fi.get("last_price")
+                    if price is None or price <= 0:
+                        logger.debug("No price for %s", sym)
+                        continue
+                    prev = fi.get("previousClose") or fi.get("previous_close")
+                    change_pct = ((price - prev) / prev * 100) if prev else None
                     mt_str = datetime.now(tz=timezone.utc).isoformat()
-
-                fetched.append((sym, price, change_pct, mt_str))
-            except Exception:
-                logger.debug("Failed to fetch %s", sym, exc_info=True)
+                    fetched.append((sym, float(price), change_pct, mt_str))
+                except Exception:
+                    logger.debug("Failed to fetch %s", sym, exc_info=True)
+        except Exception:
+            logger.exception("Batch ticker fetch failed")
 
         if not fetched:
             logger.info("No quotes retrieved")

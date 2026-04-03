@@ -40,21 +40,30 @@ def fetch_historical_prices(
     start_str = start.isoformat()
     end_str = end.isoformat()
 
-    # Determine what date ranges are missing
+    # Determine what range (if any) we actually need to fetch
+    fetch_start = start_str
+    fetch_end = end_str
     need_fetch = False
+
     if cached_min is None and high_water is None:
         need_fetch = True
     elif cached_min is not None:
         effective_max = max(cached_max, high_water) if high_water else cached_max
-        if start_str < cached_min or end_str > effective_max:
+        if start_str < cached_min:
             need_fetch = True
+            fetch_end = cached_min
+        if end_str > effective_max:
+            need_fetch = True
+            fetch_start = effective_max
+            fetch_end = end_str
     elif high_water is not None and end_str > high_water:
         need_fetch = True
+        fetch_start = high_water
 
     if not need_fetch:
         return 0
 
-    df = yf.download(symbol, start=start_str, end=end_str, progress=False, auto_adjust=False)
+    df = yf.download(symbol, start=fetch_start, end=fetch_end, progress=False, auto_adjust=False)
 
     # Record that we've attempted this range
     prev = _fetch_high_water.get(key, "")
@@ -175,14 +184,19 @@ def fetch_live_prices(
     if eodhd_syms and conn is not None:
         prices.update(queries.get_latest_prices(conn, eodhd_syms))
 
-    for sym in yahoo_syms:
+    if yahoo_syms:
         try:
-            info = yf.Ticker(sym).fast_info
-            price = info.get("lastPrice") or info.get("last_price")
-            if price and price > 0:
-                prices[sym] = float(price)
+            tickers_obj = yf.Tickers(" ".join(yahoo_syms))
+            for sym in yahoo_syms:
+                try:
+                    fi = tickers_obj.tickers[sym].fast_info
+                    price = fi.get("lastPrice") or fi.get("last_price")
+                    if price and price > 0:
+                        prices[sym] = float(price)
+                except Exception:
+                    logger.warning("Failed to fetch live price for %s", sym)
         except Exception:
-            logger.warning("Failed to fetch live price for %s", sym)
+            logger.warning("Batch live price fetch failed")
 
     return prices
 

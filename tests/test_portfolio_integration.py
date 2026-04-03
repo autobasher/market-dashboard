@@ -24,7 +24,7 @@ def test_full_pipeline(portfolio_db):
     conn, pid = portfolio_db
 
     # 1. Parse CSV
-    txs = parse_vanguard_csv(io.StringIO(INTEGRATION_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(INTEGRATION_CSV), "acct-1")
     assert len(txs) == 4
 
     # 2. Insert transactions
@@ -103,7 +103,7 @@ def test_reimport_wipe_and_reinsert(portfolio_db):
     """Re-importing via wipe+reinsert produces the same transaction count."""
     conn, pid = portfolio_db
 
-    txs = parse_vanguard_csv(io.StringIO(INTEGRATION_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(INTEGRATION_CSV), "acct-1")
     for tx in txs:
         queries.insert_transaction(
             conn,
@@ -124,7 +124,7 @@ def test_reimport_wipe_and_reinsert(portfolio_db):
     conn.execute("DELETE FROM transactions")
     conn.commit()
 
-    txs2 = parse_vanguard_csv(io.StringIO(INTEGRATION_CSV), "acct-1")
+    txs2, _ = parse_vanguard_csv(io.StringIO(INTEGRATION_CSV), "acct-1")
     for tx in txs2:
         queries.insert_transaction(
             conn,

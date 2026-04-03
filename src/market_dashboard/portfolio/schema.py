@@ -110,7 +110,13 @@ CREATE TABLE IF NOT EXISTS uploaded_csv (
 """
 
 
+_initialized: set[int] = set()
+
+
 def initialize_portfolio_schema(conn: sqlite3.Connection) -> None:
+    key = id(conn)
+    if key in _initialized:
+        return
     conn.executescript(PORTFOLIO_SCHEMA_SQL)
     # Idempotent migrations for existing databases
     for stmt in [
@@ -131,6 +137,7 @@ def initialize_portfolio_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE portfolios SET name = 'Ariel1' WHERE name = 'My Portfolio'"
     )
+    _initialized.add(key)
 
 
 def _migrate_uploaded_csv(conn: sqlite3.Connection) -> None:

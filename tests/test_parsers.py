@@ -19,13 +19,13 @@ Trade Date,Settlement Date,Transaction Type,Transaction Description,Symbol,Share
 
 
 def test_parse_vanguard_basic():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     # Sweep row now included, Exchange produces 2 rows -> 9 total
     assert len(txs) == 9
 
 
 def test_parse_vanguard_tx_types():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     types = [t.tx_type for t in txs]
     assert types == [
         TxType.BUY,
@@ -41,7 +41,7 @@ def test_parse_vanguard_tx_types():
 
 
 def test_parse_vanguard_dates():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     assert txs[0].trade_date == date(2024, 1, 15)
     assert txs[0].settlement_date == date(2024, 1, 17)
     # Dividend has no settlement date
@@ -49,7 +49,7 @@ def test_parse_vanguard_dates():
 
 
 def test_parse_vanguard_amounts():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     buy = txs[0]
     assert buy.total_amount == -2205.00
     assert buy.shares == 10.0
@@ -62,7 +62,7 @@ def test_parse_vanguard_amounts():
 
 
 def test_parse_vanguard_exchange_splitting():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     exchange_sell = txs[5]   # shifted by 1 due to sweep inclusion
     exchange_buy = txs[6]
 
@@ -76,7 +76,7 @@ def test_parse_vanguard_exchange_splitting():
 
 
 def test_parse_vanguard_fee():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     fee = txs[7]  # shifted by 1 due to sweep inclusion
     assert fee.tx_type == TxType.FEE
     assert fee.symbol is None
@@ -84,14 +84,14 @@ def test_parse_vanguard_fee():
 
 
 def test_parse_vanguard_account_id():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     assert all(t.account_id == "acct-1" for t in txs)
 
 
 def test_parse_vanguard_dedup_on_reimport():
     """Parsing the same file twice should produce identical transactions."""
-    txs1 = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
-    txs2 = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs1, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs2, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     assert len(txs1) == len(txs2)
     for a, b in zip(txs1, txs2):
         assert a.trade_date == b.trade_date
@@ -100,7 +100,7 @@ def test_parse_vanguard_dedup_on_reimport():
 
 
 def test_parse_vanguard_drip():
-    txs = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
+    txs, _ = parse_vanguard_csv(io.StringIO(SAMPLE_CSV), "acct-1")
     drip = txs[3]
     assert drip.tx_type == TxType.DRIP
     assert drip.shares == 0.07

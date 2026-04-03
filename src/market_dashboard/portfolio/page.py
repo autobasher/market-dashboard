@@ -220,8 +220,7 @@ def _pdf_to_csv_text(pdf_bytes: bytes) -> str:
     return buf.getvalue()
 
 
-def _import_section(conn):
-    all_portfolios = queries.get_all_portfolios(conn)
+def _import_section(conn, all_portfolios):
     individual_portfolios = [p for p in all_portfolios if not p["is_aggregate"]]
     has_data = len(individual_portfolios) > 0
 
@@ -347,10 +346,10 @@ def main():
 
     conn = get_app_connection()
 
-    _import_section(conn)
+    all_portfolios = queries.get_all_portfolios(conn)
+    _import_section(conn, all_portfolios)
 
     # Portfolio selector — checkboxes + Build button
-    all_portfolios = queries.get_all_portfolios(conn)
     individual_portfolios = [p for p in all_portfolios if not p["is_aggregate"]]
     if not individual_portfolios:
         st.info("Upload a Vanguard CSV to get started.")
@@ -401,52 +400,49 @@ def main():
 
     open_lots = queries.get_all_open_lots(conn, account_ids)
     symbols = _symbols_from_lots(open_lots)
-    current_prices = queries.get_latest_prices(conn, symbols)
 
-    # Ensure prices and snapshots are up to today
-    today = date.today()
-    if symbols:
-        tx_rows = []
-        for acct_id in account_ids:
-            tx_rows.extend(queries.get_transactions(conn, account_id=acct_id))
-        if tx_rows:
-            earliest = min(date.fromisoformat(r["trade_date"]) for r in tx_rows)
-            with st.spinner("Checking prices..."):
-                ensure_prices_for_portfolio(conn, symbols, earliest, today)
-            current_prices = queries.get_latest_prices(conn, symbols)
-
-            # Rebuild snapshots if stale or missing
-            latest_snap = conn.execute(
-                "SELECT MAX(snap_date) as max_date FROM portfolio_snapshots WHERE portfolio_id = ?",
-                (portfolio_id,),
-            ).fetchone()
-            if not latest_snap or not latest_snap["max_date"] or latest_snap["max_date"] < today.isoformat():
-                with st.spinner("Updating snapshots..."):
-                    if is_aggregate:
-                        # Update each member's snapshots incrementally, then rebuild aggregate
-                        for sel in selected:
-                            member_snap = conn.execute(
-                                "SELECT MAX(snap_date) as max_date FROM portfolio_snapshots WHERE portfolio_id = ?",
-                                (sel["portfolio_id"],),
-                            ).fetchone()
-                            member_start = earliest
-                            if member_snap and member_snap["max_date"]:
-                                member_start = date.fromisoformat(member_snap["max_date"]) + timedelta(days=1)
-                            if member_start <= today:
-                                build_daily_snapshots(conn, sel["portfolio_id"], member_start, today)
-                        _rebuild_aggregate_snapshots(conn, portfolio_id)
-                    else:
-                        snap_start = earliest
-                        if latest_snap and latest_snap["max_date"]:
-                            snap_start = date.fromisoformat(latest_snap["max_date"]) + timedelta(days=1)
-                        build_daily_snapshots(conn, portfolio_id, snap_start, today)
-
-    snapshots = queries.get_snapshots(conn, portfolio_id)
-
-    # Gather all transactions + disposals for metrics
+    # Fetch all transactions once — used for prices, snapshots, and metrics
     all_txs = []
     for acct_id in account_ids:
         all_txs.extend(queries.get_transactions(conn, account_id=acct_id))
+
+    # Ensure prices and snapshots are up to today
+    today = date.today()
+    if symbols and all_txs:
+        earliest = min(date.fromisoformat(r["trade_date"]) for r in all_txs)
+        with st.spinner("Checking prices..."):
+            ensure_prices_for_portfolio(conn, symbols, earliest, today)
+        current_prices = queries.get_latest_prices(conn, symbols)
+    else:
+        current_prices = queries.get_latest_prices(conn, symbols)
+
+    if symbols and all_txs:
+        # Rebuild snapshots if stale or missing
+        latest_snap = conn.execute(
+            "SELECT MAX(snap_date) as max_date FROM portfolio_snapshots WHERE portfolio_id = ?",
+            (portfolio_id,),
+        ).fetchone()
+        if not latest_snap or not latest_snap["max_date"] or latest_snap["max_date"] < today.isoformat():
+            with st.spinner("Updating snapshots..."):
+                if is_aggregate:
+                    for sel in selected:
+                        member_snap = conn.execute(
+                            "SELECT MAX(snap_date) as max_date FROM portfolio_snapshots WHERE portfolio_id = ?",
+                            (sel["portfolio_id"],),
+                        ).fetchone()
+                        member_start = earliest
+                        if member_snap and member_snap["max_date"]:
+                            member_start = date.fromisoformat(member_snap["max_date"]) + timedelta(days=1)
+                        if member_start <= today:
+                            build_daily_snapshots(conn, sel["portfolio_id"], member_start, today)
+                    _rebuild_aggregate_snapshots(conn, portfolio_id)
+                else:
+                    snap_start = earliest
+                    if latest_snap and latest_snap["max_date"]:
+                        snap_start = date.fromisoformat(latest_snap["max_date"]) + timedelta(days=1)
+                    build_daily_snapshots(conn, portfolio_id, snap_start, today)
+
+    snapshots = queries.get_snapshots(conn, portfolio_id)
     disposals = queries.get_disposals(conn)
 
     # Build full snapshot DataFrame
