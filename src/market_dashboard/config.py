@@ -38,7 +38,7 @@ ALTERNATIVES_LINES: tuple[DashboardLine, ...] = (
         (0.2, 0.2, 0.2, 0.2, 0.2),
     ),
     DashboardLine("Real Estate", "alternatives", ("DFGR",), (1.0,)),
-    DashboardLine("Uranium",     "alternatives", ("U-UN.TO",), (1.0,)),
+    DashboardLine("Uranium",     "alternatives", ("U-U.TO",), (1.0,)),
     DashboardLine("Gold",        "alternatives", ("GLD",), (1.0,)),
     DashboardLine("Bitcoin",     "alternatives", ("IBIT",), (1.0,)),
 )
@@ -96,13 +96,14 @@ DISPLAY_GROUPS: dict[str, dict] = {
     "US Multifactor": {"symbols": ["AVLV", "AVUV", "DFAT", "QVAL", "DFUV"], "class": "Equity"},
     "Non-US Developed Multifactor": {"symbols": ["DFIV", "AVDV", "DISV", "EWJV", "IVAL", "AVIV", "IMOM"], "class": "Equity"},
     "Emerging Markets Multifactor": {"symbols": ["DFEV", "AVES", "GVAL", "GMOM", "FRDM"], "class": "Equity"},
-    "Commodity Equities": {"symbols": ["OIH", "URNM", "URA"], "class": "Equity"},
+    "Commodity Equities": {"symbols": ["OIH", "URNM", "URA", "XLE"], "class": "Equity"},
     "Municipal Bonds": {"symbols": ["VTEB", "MUNY"], "class": "Fixed Income"},
-    "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN", "AQMNX", "RSBT", "AHLT"], "class": "Alternatives"},
-    "Global Macro": {"symbols": ["HFGM"], "class": "Alternatives"},
+    "Trend Following": {"symbols": ["DBMF", "QMHNX", "TFPN", "AQMNX", "RSBT", "AHLT", "HFGM", "KMLM", "MFUT"], "class": "Alternatives"},
+    "Long-Short Factors": {"symbols": ["QSPNX"], "class": "Alternatives"},
+    "Global Real Estate": {"symbols": ["DFGR"], "class": "Alternatives"},
     "US Treasuries": {"symbols": ["VGIT", "BOXA"], "class": "Fixed Income"},
     "US TIPS": {"symbols": ["SCHP"], "class": "Fixed Income"},
-    "Non-US Bonds": {"symbols": ["DFGX"], "class": "Fixed Income"},
+    "Non-US Bonds": {"symbols": ["DFGX", "WIP", "BNDX"], "class": "Fixed Income"},
     "Cash": {"symbols": ["VYFXX", "VMMXX", "VMFXX", "BOXX", "VTIP"], "class": "Cash"},
 }
 
@@ -133,11 +134,13 @@ class TickerSource(NamedTuple):
 
 
 ISIN_MAP: dict[str, TickerSource] = {
-    # Yahoo Finance — stocks (2)
+    # Yahoo Finance — stocks
     "US68989M1036": TickerSource("OUST", "yahoo", "Ouster Inc"),
+    "US68989M2026": TickerSource("OUST", "yahoo", "Ouster Inc"),
+    "KYG2283K1105": TickerSource("OUST", "yahoo", "Ouster Inc (Colonnade SPAC)"),
     "US76954A1034": TickerSource("RIVN", "yahoo", "Rivian Automotive Inc"),
-    # Yahoo Finance — trusts & ETFs (8)
-    "CA85210A1049": TickerSource("U-UN.TO", "yahoo", "Sprott Physical Uranium Trust"),
+    # Yahoo Finance — trusts & ETFs (non-US listed)
+    "CA85210A1049": TickerSource("U-U.TO", "yahoo", "Sprott Physical Uranium Trust (USD)"),
     "IE00B1FZSC47": TickerSource("IDTP.L", "yahoo", "iShares USD TIPS UCITS ETF (Acc)"),
     "IE00BZ0G8977": TickerSource("TIPS.L", "yahoo", "SPDR Bloomberg US TIPS UCITS ETF (Dist)"),
     "IE00BZ163L38": TickerSource("VDET.L", "yahoo", "Vanguard USD EM Government Bond UCITS ETF (Dist)"),
@@ -145,14 +148,37 @@ ISIN_MAP: dict[str, TickerSource] = {
     "IE00BMGNVD65": TickerSource("AGUG.AS", "yahoo", "iShares Core Global Aggregate Bond UCITS ETF USD Hedged (Dist)"),
     "IE0003R87OG3": TickerSource("AVGS.L", "yahoo", "Avantis Global Small Cap Value UCITS ETF (Acc)"),
     "IE00B3B8PX14": TickerSource("IGIL.L", "yahoo", "iShares Global Inflation Linked Govt Bond UCITS ETF (Acc)"),
-    # EODHD — Dimensional mutual funds (4)
+    # Yahoo Finance — Vanguard US ETFs
+    "US9229087690": TickerSource("VTI", "yahoo", "Vanguard Total Stock Market ETF"),
+    "US9219438580": TickerSource("VEA", "yahoo", "Vanguard FTSE Developed Markets ETF"),
+    "US9219464065": TickerSource("VYM", "yahoo", "Vanguard High Dividend Yield ETF"),
+    "US9220428588": TickerSource("VWO", "yahoo", "Vanguard FTSE Emerging Markets ETF"),
+    "US9229085538": TickerSource("VNQ", "yahoo", "Vanguard Real Estate ETF"),
+    "US9229086114": TickerSource("VBR", "yahoo", "Vanguard Small-Cap Value ETF"),
+    "US9219467944": TickerSource("VYMI", "yahoo", "Vanguard Int'l High Dividend Yield ETF"),
+    "US9220427424": TickerSource("VT", "yahoo", "Vanguard Total World Stock ETF"),
+    "US9220428745": TickerSource("VGK", "yahoo", "Vanguard FTSE Europe ETF"),
+    "US9219468850": TickerSource("VWOB", "yahoo", "Vanguard EM Government Bond ETF"),
+    "US92206C7065": TickerSource("VGIT", "yahoo", "Vanguard Intermediate-Term Treasury ETF"),
+    "US9220426764": TickerSource("VNQI", "yahoo", "Vanguard Global ex-US Real Estate ETF"),
+    "US25434V8072": TickerSource("DFIV", "yahoo", "Dimensional International Value ETF"),
+    # Yahoo Finance — Vanguard mutual funds
+    "US9219392035": TickerSource("VTRIX", "yahoo", "Vanguard International Value Fund"),
+    "US9219397083": TickerSource("VCMDX", "yahoo", "Vanguard Commodity Strategy Fund"),
+    "US9220312089": TickerSource("VWEHX", "yahoo", "Vanguard High-Yield Corporate Fund"),
+    "US9220317609": TickerSource("VWEAX", "yahoo", "Vanguard High-Yield Corporate Admiral"),
+    # EODHD — Dimensional mutual funds
     "IE00B0HCGS80": TickerSource("IE00B0HCGS80.EUFUND", "eodhd", "Dimensional Emerging Markets Value Fund"),
     "IE00B2PC0609": TickerSource("IE00B2PC0609.EUFUND", "eodhd", "Dimensional Global Targeted Value Fund"),
     "IE00B3V7VL84": TickerSource("IE00B3V7VL84.EUFUND", "eodhd", "Dimensional World Equity Fund"),
     "IE00BG85LS38": TickerSource("IE00BG85LS38.EUFUND", "eodhd", "Dimensional Global Core Fixed Income Fund"),
-    # EODHD — AQR mutual funds (2)
+    # EODHD — AQR mutual funds
     "LU1103257975": TickerSource("LU1103257975.EUFUND", "eodhd", "AQR Managed Futures UCITS Fund"),
     "LU1662505954": TickerSource("LU1662505954.EUFUND", "eodhd", "AQR Style Premia UCITS Fund"),
+    "LU1103258601": TickerSource("LU1103258601.EUFUND", "eodhd", "AQR Style Premia UCITS Fund (USD A)"),
+    # Yahoo Finance — LSE-listed ETFs (USD denominated)
+    "IE00BGYWFS63": TickerSource("VDTA.L", "yahoo", "Vanguard USD Treasury Bond UCITS ETF (Acc)"),
+    "LU0128497707": TickerSource("LU0128497707.EUFUND", "eodhd", "Pictet Short-Term Money Market USD"),
 }
 
 EODHD_TICKERS: frozenset[str] = frozenset(

@@ -41,6 +41,12 @@ def _eodhd_get(endpoint: str, params: dict[str, str]) -> list[dict]:
         if e.code == 429:
             logger.warning("EODHD rate limit hit — daily quota exhausted")
             return []
+        if e.code == 401:
+            logger.warning("EODHD API key unauthorized (401) — check key validity")
+            return []
+        if e.code == 404:
+            logger.warning("EODHD ticker not found (404) for %s", endpoint)
+            return []
         raise
 
     if isinstance(data, dict) and "error" in data:
@@ -68,20 +74,33 @@ def fetch_eodhd_prices(
     start_str = start.isoformat()
     end_str = end.isoformat()
 
+    # Determine what range (if any) we actually need to fetch
+    fetch_start = start_str
+    fetch_end = end_str
     need_fetch = False
+
     if cached_min is None and high_water is None:
+        # No data at all — fetch everything
         need_fetch = True
     elif cached_min is not None:
         effective_max = max(cached_max, high_water) if high_water else cached_max
-        if start_str < cached_min or end_str > effective_max:
+        if start_str < cached_min:
+            # Missing early history — fetch the gap before cached data
             need_fetch = True
+            fetch_end = cached_min
+        if end_str > effective_max:
+            # Missing recent data — fetch only the tail
+            need_fetch = True
+            fetch_start = effective_max
+            fetch_end = end_str
     elif high_water is not None and end_str > high_water:
         need_fetch = True
+        fetch_start = high_water
 
     if not need_fetch:
         return 0
 
-    data = _eodhd_get(f"eod/{symbol}", {"from": start_str, "to": end_str})
+    data = _eodhd_get(f"eod/{symbol}", {"from": fetch_start, "to": fetch_end})
 
     prev = _fetch_high_water.get(key, "")
     _fetch_high_water[key] = max(end_str, prev)

@@ -168,6 +168,17 @@ def parse_ail_xlsx(
     df = pd.read_excel(file_path, sheet_name="transactions", engine="openpyxl")
     source = str(file_path) if not isinstance(file_path, io.BytesIO) else "<xlsx>"
 
+    # Deduplicate: same trade appearing in multiple source files (e.g. xlsx + PDF)
+    # has identical (ISIN, Value Date, Quantity, Amount) but different trade dates.
+    # Keep the first occurrence (earliest trade date).
+    df = df.sort_values("Date")
+    dedup_cols = ["ISIN", "Value Date", "Quantity", "Amount"]
+    before = len(df)
+    df = df.drop_duplicates(subset=dedup_cols, keep="first")
+    dropped = before - len(df)
+    if dropped:
+        logger.info("AIL dedup: dropped %d duplicate rows (same ISIN/ValueDate/Qty/Amt)", dropped)
+
     transactions: list[Transaction] = []
     unmapped: set[str] = set()
 
