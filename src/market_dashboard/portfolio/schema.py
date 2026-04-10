@@ -124,6 +124,7 @@ def initialize_portfolio_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE portfolio_snapshots ADD COLUMN twr REAL NOT NULL DEFAULT 0.0",
         "ALTER TABLE portfolios ADD COLUMN is_aggregate INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE portfolios ADD COLUMN cost_basis_start REAL DEFAULT NULL",
+        "ALTER TABLE portfolios ADD COLUMN starting_cash REAL DEFAULT NULL",
     ]:
         try:
             conn.execute(stmt)

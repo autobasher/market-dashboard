@@ -102,6 +102,20 @@ def build_daily_snapshots(
 
     all_txs.sort(key=lambda t: (t["trade_date"], t["tx_id"]))
 
+    # Deduplicate split transactions: aggregates pull the same corporate action
+    # once per member account that holds the symbol. Without this, the multiplier
+    # is applied multiple times to the combined position dict.
+    seen_splits: set[tuple] = set()
+    deduped_txs = []
+    for tx in all_txs:
+        if tx["tx_type"] == TxType.SPLIT.value and tx["split_ratio"]:
+            key = (tx["symbol"], tx["trade_date"], tx["split_ratio"])
+            if key in seen_splits:
+                continue
+            seen_splits.add(key)
+        deduped_txs.append(tx)
+    all_txs = deduped_txs
+
     first_date = date.fromisoformat(all_txs[0]["trade_date"])
     snap_end = end or date.today()
 
@@ -117,21 +131,25 @@ def build_daily_snapshots(
     # Build split factors to reverse yfinance's split adjustment
     split_factors = _build_split_factors(all_txs)
 
-    # Check for cost_basis_start override (e.g. transferred-in portfolios with unknown cost basis)
+    # Check for cost_basis_start and starting_cash overrides
     row = conn.execute(
-        "SELECT cost_basis_start FROM portfolios WHERE portfolio_id = ?",
+        "SELECT cost_basis_start, starting_cash FROM portfolios WHERE portfolio_id = ?",
         (portfolio_id,),
     ).fetchone()
     cost_basis_start = row["cost_basis_start"] if row and row["cost_basis_start"] is not None else None
+    starting_cash = row["starting_cash"] if row and row["starting_cash"] is not None else None
 
     # If the portfolio has no sweep transactions, accumulate dividends as cash
     # (Vanguard portfolios sweep dividends into VMFXX; others like AIL do not)
     has_sweeps = any(tx["tx_type"] in (TxType.SWEEP_IN.value, TxType.SWEEP_OUT.value) for tx in all_txs)
 
-    # Determine whether we can do an incremental build
+    # Always full-rebuild from first_date. Incremental resume was removed
+    # because stored snapshots drift from yfinance's re-cached prices, and
+    # the resume branch never reconsiders prior days. Full rebuild is cheap
+    # enough and guarantees prices match the current cache.
     loop_start = first_date
     positions: dict[str, float] = {}
-    vmfxx_balance = 0.0
+    vmfxx_balance = starting_cash or 0.0
     net_deposits = 0.0
     is_first_day = True
     last_price: dict[str, float] = {}
@@ -140,88 +158,12 @@ def build_daily_snapshots(
     cumulative_twr = 0.0
     tx_idx = 0
 
-    resume_snap = None
-    if start is not None and start > first_date:
-        resume_snap = conn.execute(
-            "SELECT * FROM portfolio_snapshots WHERE portfolio_id = ? AND snap_date < ? "
-            "ORDER BY snap_date DESC LIMIT 1",
-            (portfolio_id, start.isoformat()),
-        ).fetchone()
-
-    if resume_snap:
-        # Incremental: restore state from last snapshot + transaction replay
-        loop_start = start
-        queries.delete_snapshots_from(conn, portfolio_id, start)
-
-        # Restore numeric state from the snapshot
-        net_deposits = resume_snap["total_cost"]
-        vmfxx_balance = resume_snap["cash_balance"]
-        cumulative_twr = resume_snap["twr"]
-        prev_total_value = resume_snap["total_value"]
-        is_first_day = False
-
-        # Replay transactions before start to reconstruct positions
-        resume_date_str = start.isoformat()
-        for tx in all_txs:
-            if tx["trade_date"] >= resume_date_str:
-                break
-            tx_type = tx["tx_type"]
-            symbol = tx["symbol"]
-            shares = tx["shares"] or 0.0
-
-            if tx_type == TxType.SWEEP_IN.value:
-                pass  # vmfxx_balance restored from snapshot
-            elif tx_type == TxType.SWEEP_OUT.value:
-                pass
-            elif tx_type in (TxType.BUY.value, TxType.DRIP.value):
-                if tx_type == TxType.DRIP.value and symbol == "VMFXX":
-                    pass
-                elif symbol and shares:
-                    positions[symbol] = positions.get(symbol, 0.0) + shares
-            elif tx_type == TxType.SELL.value:
-                if symbol:
-                    positions[symbol] = positions.get(symbol, 0.0) - shares
-            elif tx_type == TxType.TRANSFER_IN.value:
-                if symbol and shares:
-                    positions[symbol] = positions.get(symbol, 0.0) + shares
-            elif tx_type == TxType.TRANSFER_OUT.value:
-                if symbol and shares:
-                    positions[symbol] = positions.get(symbol, 0.0) - shares
-            elif tx_type == TxType.SPLIT.value:
-                ratio = tx["split_ratio"] or 1.0
-                if symbol and symbol in positions:
-                    positions[symbol] *= ratio
-            if not has_sweeps and tx_type == TxType.DIVIDEND.value:
-                pass  # vmfxx_balance restored from snapshot
-
-        # Advance tx_idx past already-processed transactions
-        while tx_idx < len(all_txs) and all_txs[tx_idx]["trade_date"] < resume_date_str:
-            tx_idx += 1
-
-        # Seed last_price from the most recent price before start
-        for sym in all_symbols:
-            if sym in MONEY_MARKET_TICKERS:
-                last_price[sym] = 1.0
-                last_price_date[sym] = loop_start
-                continue
-            if sym not in prices_by_sym:
-                continue
-            # Find the latest price on or before start
-            best_date = None
-            for d in prices_by_sym[sym]:
-                if d < resume_date_str and (best_date is None or d > best_date):
-                    best_date = d
-            if best_date:
-                raw = prices_by_sym[sym][best_date]
-                factor = _unadjust_factor(split_factors, sym, best_date)
-                last_price[sym] = raw * factor
-                last_price_date[sym] = date.fromisoformat(best_date)
-    else:
-        # Full rebuild from the beginning
-        queries.delete_snapshots_from(conn, portfolio_id, first_date)
-        for sym in all_symbols:
-            if sym in MONEY_MARKET_TICKERS:
-                last_price[sym] = 1.0
+    queries.delete_snapshots_from(conn, portfolio_id, first_date)
+    # Seed money market prices. Do NOT set last_price_date — they never
+    # receive daily updates, so a stored date would go stale and zero them out.
+    for sym in all_symbols:
+        if sym in MONEY_MARKET_TICKERS:
+            last_price[sym] = 1.0
 
     result_rows = []
     current = loop_start
@@ -273,10 +215,14 @@ def build_daily_snapshots(
                     vmfxx_balance += abs(tx["total_amount"] or 0.0)
                 elif symbol and shares:
                     positions[symbol] = positions.get(symbol, 0.0) + shares
+                    if not has_sweeps:
+                        vmfxx_balance -= abs(tx["total_amount"] or 0.0)
 
             elif tx_type == TxType.SELL.value:
                 if symbol:
                     positions[symbol] = positions.get(symbol, 0.0) - shares
+                    if not has_sweeps:
+                        vmfxx_balance += abs(tx["total_amount"] or 0.0)
 
             elif tx_type == TxType.TRANSFER_IN.value:
                 if symbol and shares:

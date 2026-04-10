@@ -35,6 +35,13 @@ def get_positions_as_of(
     if not account_ids:
         return {}, 0.0
 
+    # Seed starting cash if configured
+    row = conn.execute(
+        "SELECT starting_cash FROM portfolios WHERE portfolio_id = ?",
+        (portfolio_id,),
+    ).fetchone()
+    starting_cash = row["starting_cash"] if row and row["starting_cash"] is not None else None
+
     all_txs = []
     for acct_id in account_ids:
         all_txs.extend(
@@ -42,8 +49,10 @@ def get_positions_as_of(
         )
     all_txs.sort(key=lambda t: (t["trade_date"], t["tx_id"]))
 
+    has_sweeps = any(tx["tx_type"] in (TxType.SWEEP_IN.value, TxType.SWEEP_OUT.value) for tx in all_txs)
+
     positions: dict[str, float] = {}
-    vmfxx_balance = 0.0
+    vmfxx_balance = starting_cash or 0.0
     seen_splits: set[tuple] = set()
 
     for tx in all_txs:
@@ -60,9 +69,13 @@ def get_positions_as_of(
                 vmfxx_balance += abs(tx["total_amount"] or 0.0)
             elif symbol and shares:
                 positions[symbol] = positions.get(symbol, 0.0) + shares
+                if not has_sweeps:
+                    vmfxx_balance -= abs(tx["total_amount"] or 0.0)
         elif tx_type == TxType.SELL.value:
             if symbol:
                 positions[symbol] = positions.get(symbol, 0.0) - shares
+                if not has_sweeps:
+                    vmfxx_balance += abs(tx["total_amount"] or 0.0)
         elif tx_type == TxType.TRANSFER_IN.value:
             if symbol and shares:
                 positions[symbol] = positions.get(symbol, 0.0) + shares
@@ -92,6 +105,15 @@ def build_whatif_series(
 ) -> pd.DataFrame:
     """Build daily hold-portfolio valuations from start to end.
 
+    Uses adj_close total-return ratios so dividends are credited as if
+    reinvested. adj_close is also split-adjusted, so post-start splits
+    require no special handling.
+
+        per_share_value(t) = anchor_close × adj_close(t) / adj_close(start)
+
+    where anchor_close is the actual trading price at start (close ×
+    _unadjust_factor) so dollar values reflect reality.
+
     Returns DataFrame with columns [date, hold_value, hold_return].
     """
     positions, vmfxx_balance = get_positions_as_of(conn, portfolio_id, start)
@@ -101,15 +123,15 @@ def build_whatif_series(
 
     held_symbols = [s for s in positions if s not in MONEY_MARKET_TICKERS]
 
-    # Load ALL transactions (need post-start splits for split factors)
+    # Build split factors so we can un-split-adjust the anchor close.
+    # adj_close handles split adjustment internally (and dividends) so we
+    # don't need post_splits or unadjust beyond the anchor.
     account_ids = queries.get_effective_account_ids(conn, portfolio_id)
     all_txs = []
     for acct_id in account_ids:
         all_txs.extend(queries.get_transactions(conn, account_id=acct_id))
     all_txs.sort(key=lambda t: (t["trade_date"], t["tx_id"]))
 
-    # Deduplicate split transactions before building factors — aggregates
-    # have the same corporate action recorded once per member account
     seen = set()
     deduped_txs = []
     for tx in all_txs:
@@ -121,87 +143,84 @@ def build_whatif_series(
         deduped_txs.append(tx)
     split_factors = _build_split_factors(deduped_txs)
 
-    # Collect post-start splits to apply to frozen positions
-    # Deduplicate: same (date, symbol, ratio) from different accounts is one corporate action
-    post_split_set: set[tuple[date, str, float]] = set()
-    post_splits: list[tuple[date, str, float]] = []
-    for tx in all_txs:
-        if tx["tx_type"] != TxType.SPLIT.value:
-            continue
-        ratio = tx["split_ratio"] or 1.0
-        tx_date = date.fromisoformat(tx["trade_date"])
-        key = (tx_date, tx["symbol"], ratio)
-        if tx_date > start and tx_date <= end and tx["symbol"] in positions and key not in post_split_set:
-            post_split_set.add(key)
-            post_splits.append(key)
-    post_splits.sort()
-
-    # Load prices for held symbols — start 7 days early so weekends/holidays
-    # have a last_price available on the first output day
+    # Load prices: need close + adj_close. Lookback so weekend/holiday
+    # starts still find an anchor.
     price_lookback = start - timedelta(days=7)
-    prices_by_sym: dict[str, dict[str, float]] = {}
+    prices_by_sym: dict[str, dict[str, tuple[float, float]]] = {}
     for sym in held_symbols:
         rows = queries.get_daily_prices(conn, sym, price_lookback, end)
-        prices_by_sym[sym] = {r["price_date"]: r["close"] for r in rows}
+        prices_by_sym[sym] = {
+            r["price_date"]: (r["close"], r["adj_close"]) for r in rows
+        }
 
-    # Day-by-day valuation — run from lookback to seed last_price,
-    # but only emit rows from start onward
-    current = price_lookback
-    start_value: float | None = None
-    last_price: dict[str, float] = {}
+    # Anchor each symbol: actual trading price at start and adj_close at start.
+    # If a symbol has no price at/before start, drop it (no way to anchor).
+    start_str = start.isoformat()
+    anchors: dict[str, tuple[float, float]] = {}  # sym -> (anchor_close, adj_at_start)
+    for sym in held_symbols:
+        sym_prices = prices_by_sym.get(sym, {})
+        candidates = [d for d in sym_prices if d <= start_str]
+        if not candidates:
+            continue
+        anchor_date = max(candidates)
+        raw_close, adj = sym_prices[anchor_date]
+        unadj = _unadjust_factor(split_factors, sym, anchor_date)
+        anchors[sym] = (raw_close * unadj, adj)
+
+    # Money market positions held in `positions` (e.g. VMMXX) trade at $1.
+    mm_value = sum(
+        sh for sym, sh in positions.items() if sym in MONEY_MARKET_TICKERS
+    )
+    cash = max(vmfxx_balance, 0.0)
+
+    # Track latest adj_close per symbol and the date of its last update for
+    # staleness detection. Don't seed money markets — staleness check defaults
+    # to "today" via .get(sym, current) so they're always considered fresh.
+    last_adj: dict[str, float] = {}
     last_price_date: dict[str, date] = {}
-    split_idx = 0
     rows_out = []
+    start_value: float | None = None
 
-    # Seed money market prices
-    for sym in positions:
-        if sym in MONEY_MARKET_TICKERS:
-            last_price[sym] = 1.0
-            last_price_date[sym] = current
-
+    current = start
     while current <= end:
         date_str = current.isoformat()
 
-        # Apply any splits that fall on this day
-        while split_idx < len(post_splits) and post_splits[split_idx][0] <= current:
-            _, sym, ratio = post_splits[split_idx]
-            if sym in positions:
-                positions[sym] *= ratio
-            split_idx += 1
-
-        # Update prices for today
+        # Update today's adj_close for any symbol that traded
         for sym in held_symbols:
-            if sym in prices_by_sym and date_str in prices_by_sym[sym]:
-                raw = prices_by_sym[sym][date_str]
-                factor = _unadjust_factor(split_factors, sym, date_str)
-                last_price[sym] = raw * factor
+            sym_prices = prices_by_sym.get(sym, {})
+            if date_str in sym_prices:
+                _, adj = sym_prices[date_str]
+                last_adj[sym] = adj
                 last_price_date[sym] = current
 
-        # Compute hold value
         equity = 0.0
-        for sym, held in positions.items():
-            if held <= 0:
+        for sym in held_symbols:
+            if sym not in anchors:
+                continue
+            shares = positions.get(sym, 0.0)
+            if shares <= 0:
                 continue
             stale = (current - last_price_date.get(sym, current)).days > _STALE_PRICE_DAYS
             if stale:
                 continue
-            equity += held * last_price.get(sym, 0.0)
+            anchor_close, adj_at_start = anchors[sym]
+            adj_now = last_adj.get(sym, adj_at_start)
+            if adj_at_start <= 0:
+                continue
+            per_share = anchor_close * (adj_now / adj_at_start)
+            equity += shares * per_share
 
-        cash = max(vmfxx_balance, 0.0)
-        hold_value = equity + cash
+        hold_value = equity + mm_value + cash
 
-        # Only emit rows from the requested start date onward
-        if current >= start:
-            if start_value is None:
-                start_value = hold_value
+        if start_value is None:
+            start_value = hold_value
+        hold_return = (hold_value / start_value - 1) if start_value > 0 else 0.0
 
-            hold_return = (hold_value / start_value - 1) if start_value > 0 else 0.0
-
-            rows_out.append({
-                "date": current,
-                "hold_value": hold_value,
-                "hold_return": hold_return,
-            })
+        rows_out.append({
+            "date": current,
+            "hold_value": hold_value,
+            "hold_return": hold_return,
+        })
 
         current += timedelta(days=1)
 
