@@ -150,7 +150,7 @@ def build_daily_snapshots(
     loop_start = first_date
     positions: dict[str, float] = {}
     vmfxx_balance = starting_cash or 0.0
-    net_deposits = 0.0
+    net_deposits = starting_cash or 0.0
     is_first_day = True
     last_price: dict[str, float] = {}
     last_price_date: dict[str, date] = {}
