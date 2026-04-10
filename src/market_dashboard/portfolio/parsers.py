@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime
+from collections import defaultdict
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import pandas as pd
 
@@ -151,7 +153,50 @@ def parse_vanguard_csv(
             source_file=source,
         ))
 
+    transactions = redate_settlement_sweeps(transactions)
     return transactions, skipped_types
+
+
+def redate_settlement_sweeps(transactions: list[Transaction]) -> list[Transaction]:
+    """Re-date BUY/SELL settlement sweeps back to the trade date.
+
+    Vanguard records BUY/SELL on trade date but the offsetting VMFXX
+    SWEEP_OUT/SWEEP_IN settles T+1 (sometimes T+2). Walking snapshots by
+    trade date causes 1-day spikes: positions go up while VMFXX hasn't
+    been debited yet. Re-dating settlement sweeps to the matching trade
+    date makes positions and cash move together.
+
+    Match logic: per (account, date), compute net cash = SELL - BUY total.
+    For each SWEEP_OUT (cash leaving VMFXX) of $X, find a prior date within
+    5 days where net cash = -X (buys exceeded sells by X). For each SWEEP_IN
+    (by abs amount), find a prior date where net cash = +X. Closest prior
+    date wins. Unmatched sweeps (recurring distributions, real deposits) are
+    left alone. Idempotent: re-running re-matches to the same dates.
+    """
+    net_cash: dict[tuple[str, date], float] = defaultdict(float)
+    for tx in transactions:
+        if tx.tx_type == TxType.BUY:
+            net_cash[(tx.account_id, tx.trade_date)] -= abs(tx.total_amount or 0.0)
+        elif tx.tx_type == TxType.SELL:
+            net_cash[(tx.account_id, tx.trade_date)] += abs(tx.total_amount or 0.0)
+
+    out: list[Transaction] = []
+    for tx in transactions:
+        new_date: date | None = None
+        if tx.tx_type in (TxType.SWEEP_OUT, TxType.SWEEP_IN):
+            amt = abs(tx.total_amount or 0.0)
+            if amt > 0:
+                target = -amt if tx.tx_type == TxType.SWEEP_OUT else amt
+                for offset in range(1, 6):
+                    cand = tx.trade_date - timedelta(days=offset)
+                    if abs(net_cash.get((tx.account_id, cand), 0.0) - target) < 0.01:
+                        new_date = cand
+                        break
+        if new_date is not None and new_date != tx.trade_date:
+            out.append(replace(tx, trade_date=new_date))
+        else:
+            out.append(tx)
+    return out
 
 
 _AIL_TX_MAP = {"Buy": TxType.BUY, "Sell": TxType.SELL}

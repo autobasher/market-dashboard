@@ -369,6 +369,29 @@ def get_daily_prices(
     ).fetchall()
 
 
+def get_prices_on_date(
+    conn: sqlite3.Connection,
+    symbols: list[str],
+    target_date: str,
+) -> dict[str, float]:
+    """Return {symbol: close} for the latest price on or before target_date."""
+    if not symbols:
+        return {}
+    placeholders = ",".join("?" * len(symbols))
+    rows = conn.execute(
+        f"SELECT hp.symbol, hp.close "
+        f"FROM historical_prices hp "
+        f"INNER JOIN ("
+        f"  SELECT symbol, MAX(price_date) AS best_date "
+        f"  FROM historical_prices "
+        f"  WHERE symbol IN ({placeholders}) AND price_date <= ? "
+        f"  GROUP BY symbol"
+        f") best ON hp.symbol = best.symbol AND hp.price_date = best.best_date",
+        [*symbols, target_date],
+    ).fetchall()
+    return {r["symbol"]: r["close"] for r in rows}
+
+
 def get_cached_price_range(
     conn: sqlite3.Connection, symbol: str
 ) -> tuple[str | None, str | None]:

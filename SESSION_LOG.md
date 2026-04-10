@@ -134,3 +134,40 @@ EODHD free tier only provides prices from Feb 2025 onward. AIL transactions go b
 
 ### Decisions
 - See DECISIONS.md for EODHD integration decision.
+
+## 2026-04-09 Session — Trade Eval bug investigation
+
+### Context
+Ariel had Trade Eval page open showing Ariel1 with alpha=+4.47% (Actual −1.36% vs Hold −5.83%, default window 2026-02-28 → 2026-04-09). Asked me to verify the function and explain the result.
+
+### Bugs found
+
+**Bug 0 — Money market staleness in `build_whatif_series` [FIXED]**
+- `what_if.py:158-160` seeded `last_price_date[sym] = current` (= price_lookback) for VMFXX/VMMXX/VYFXX/VMRXX. Money markets are not in `held_symbols`, so the daily price-update loop never refreshes that date. After 45 days, `_STALE_PRICE_DAYS` check zeroed them out mid-series.
+- For Ariel1: VMMXX (28K sh) + VYFXX (100K sh) = $128K vanished from hold series on 2026-04-08, creating a phantom −4.7% drop.
+- **Fix applied**: removed `last_price_date[sym] = current` line; staleness check now defaults to "today" via `.get(sym, current)`. Matches snapshots.py convention.
+- After fix: Ariel1 alpha = **−0.24%** (Actual −1.36% vs Hold −1.12%). Trades have been roughly neutral, not the big +4.47% win the broken display showed.
+
+**Bug 1 — Stale incremental snapshots [PLANNED, NOT FIXED]**
+- `build_daily_snapshots` resumes from last stored snapshot when `start > first_date`. Once written, days are never reconsidered even if yfinance re-caches prices. Historical TWR drifts from current model output.
+- Effect on alpha (stale → fresh full rebuild): Anna1 −2.03% → −0.67%, Anna1+2 −3.49% → −0.61%, Anna2 −2.36% → +0.13%, Ariel2 −0.98% → +0.18%.
+- **Plan**: drop the `resume_snap` branch in `snapshots.py:144-218`; always full-rebuild from `first_date`. Personal-scale data (≤20K rows), simplicity beats incrementality.
+
+**Bug 2 — Aggregate snapshot ≠ sum of members [PLANNED, NEEDS DIAGNOSIS]**
+- Fresh-rebuild Ariel1+2+3 (id 10) start = $2,642,380 but sum of fresh members = $2,826,574. Off by **−$184,194** persistent end-to-end.
+- Anna1+2 reconciles fine, so it's specific to Ariel1+2+3, not aggregate machinery generally.
+- Suspects: case mismatch in `portfolio_accounts` (`Ariel1` vs lowercase elsewhere); `build_daily_snapshots` doesn't dedupe splits the way `what_if.py:113-121` does (would inflate, not deflate, though); cross-account transfers; duplicate txns.
+- **Plan**: per-symbol diff aggregate replay vs member-sum replay at 2026-02-28 to identify which symbol(s) account for the $184K, then trace.
+
+**Bug 3 — Hold series ignores dividends [PLANNED, NOT FIXED]**
+- `build_whatif_series` values positions as `shares × close`. No dividend reinvestment, no cash accumulation. Actual TWR captures divs via DIVIDEND/SWEEP_IN/DRIP txns. Bias: ~0.1–0.3% low for typical equity portfolios over 6 weeks.
+- **Plan**: switch to total-return ratio using yfinance `adj_close`: `hold_value_per_symbol(t) = shares_at_start × close[start] × (adj_close[t] / adj_close[start])`. Splits + divs both fall out automatically; can drop `_unadjust_factor`/`post_splits` machinery.
+
+### Suggested fix order
+1. Bug 1 (broadest impact, simplest fix)
+2. Bug 3 (small uniform correction)
+3. Bug 2 (needs diagnosis first)
+
+### Unresolved
+- All three remaining bugs are planned but not implemented. Ariel will pick up after compaction.
+- Ariel1 trade rotation (March 2026: out of intl value/momentum, into energy/managed-futures/TIPS/RIVN/OUST/AHLT) has been roughly neutral vs holding, not the +4.5% the broken display suggested. Worth re-evaluating once Bugs 1 & 3 are also fixed.

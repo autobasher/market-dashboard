@@ -10,11 +10,12 @@ from dateutil.relativedelta import relativedelta
 
 import altair as alt
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from market_dashboard.config import (
     CLASS_BASE_COLORS, CLASS_ORDER, DISPLAY_GROUPS,
-    GROUPED_SYMS, SYMBOL_LABELS,
+    GROUPED_SYMS, MONEY_MARKET_TICKERS, SYMBOL_LABELS,
 )
 from market_dashboard.database.connection import get_app_connection
 from market_dashboard.portfolio import queries
@@ -50,6 +51,84 @@ def _store_csv(conn, filename: str, content: bytes, account_id: str, account_nam
         "VALUES (?, ?, ?, ?, ?)",
         (account_id, filename, content, account_name, cash_balance),
     )
+
+
+def _build_treemap_data(
+    open_lots, current_prices, conn, cash_balance: float, period_start_str: str | None,
+) -> pd.DataFrame | None:
+    """Build treemap data: one row per display group with market value and period return."""
+    # Compute per-symbol market values from lots
+    sym_values: dict[str, float] = {}
+    for lot in open_lots:
+        sym = lot["symbol"]
+        shares = lot["shares_remaining"]
+        if shares <= 0:
+            continue
+        price = current_prices.get(sym, 0.0)
+        sym_values[sym] = sym_values.get(sym, 0.0) + shares * price
+
+    if not sym_values and cash_balance <= 0:
+        return None
+
+    # Get period-start prices for return computation
+    all_syms = [s for s in sym_values if s not in MONEY_MARKET_TICKERS]
+    if all_syms:
+        if period_start_str:
+            start_prices = queries.get_prices_on_date(conn, all_syms, period_start_str)
+        else:
+            # "All" period: use earliest available price per symbol
+            start_prices = {}
+            for sym in all_syms:
+                row = conn.execute(
+                    "SELECT close FROM historical_prices WHERE symbol = ? "
+                    "ORDER BY price_date ASC LIMIT 1", (sym,),
+                ).fetchone()
+                if row:
+                    start_prices[sym] = row["close"]
+    else:
+        start_prices = {}
+
+    def _sym_return(sym: str) -> float | None:
+        if sym in MONEY_MARKET_TICKERS:
+            return 0.0
+        cur = current_prices.get(sym, 0.0)
+        start = start_prices.get(sym)
+        if start and start > 0 and cur > 0:
+            return cur / start - 1
+        return None
+
+    rows = []
+    for grp, info in DISPLAY_GROUPS.items():
+        grp_value = sum(sym_values.get(s, 0.0) for s in info["symbols"])
+        if grp_value < 0.01:
+            continue
+        # Value-weighted return across symbols in group
+        weighted_ret = 0.0
+        total_weight = 0.0
+        for s in info["symbols"]:
+            val = sym_values.get(s, 0.0)
+            if val < 0.01:
+                continue
+            ret = _sym_return(s)
+            if ret is not None:
+                weighted_ret += val * ret
+                total_weight += val
+        grp_ret = weighted_ret / total_weight if total_weight > 0 else 0.0
+        rows.append({"Class": info["class"], "Group": grp, "Value": grp_value, "Return": grp_ret})
+
+    # Ungrouped symbols (OUST, RIVN, etc.)
+    grouped = {s for info in DISPLAY_GROUPS.values() for s in info["symbols"]}
+    for sym, val in sym_values.items():
+        if sym in grouped or sym in MONEY_MARKET_TICKERS or val < 0.01:
+            continue
+        ret = _sym_return(sym) or 0.0
+        rows.append({"Class": "Equity", "Group": sym, "Value": val, "Return": ret})
+
+    # Cash
+    if cash_balance > 0.01:
+        rows.append({"Class": "Cash", "Group": "Cash", "Value": cash_balance, "Return": 0.0})
+
+    return pd.DataFrame(rows) if rows else None
 
 
 def _do_import(conn, portfolio_name: str, csv_text: str | None = None,
@@ -720,8 +799,16 @@ def main():
                 alloc_rows.append({"Label": label, "Allocation": pct, "Class": "Equity"})
 
         alloc_df = pd.DataFrame(alloc_rows)
+        # Pie order: Equity (CW from noon) → Alts → Cash → FI (CCW into noon)
+        _PIE_CLASS_ORDER = {"Equity": 0, "Alternatives": 1, "Cash": 2, "Fixed Income": 3}
+        alloc_df["_cls_rank"] = alloc_df["Class"].map(_PIE_CLASS_ORDER)
+        # FI sorts ascending so its largest group ends up last (nearest noon on the left)
+        alloc_df["_sort_key"] = alloc_df.apply(
+            lambda r: (r["_cls_rank"], r["Allocation"] if r["Class"] == "Fixed Income" else -r["Allocation"]),
+            axis=1,
+        )
+        alloc_df = alloc_df.sort_values("_sort_key").drop(columns=["_cls_rank", "_sort_key"]).reset_index(drop=True)
         alloc_df["Class"] = pd.Categorical(alloc_df["Class"], categories=CLASS_ORDER, ordered=True)
-        alloc_df = alloc_df.sort_values(["Class", "Allocation"], ascending=[True, False]).reset_index(drop=True)
 
         # Text label with percentage
         alloc_df["text_label"] = alloc_df.apply(
@@ -754,6 +841,27 @@ def main():
             lambda r: r["text_label"] if r["mid_frac"] >= 0.5 else "", axis=1,
         )
 
+        # Asset class summary table (left) + donut chart (right)
+        class_totals = alloc_df.groupby("Class", observed=True)["Allocation"].sum()
+        class_html = '<table style="margin-top:2rem;font-size:.95rem;border-collapse:collapse">'
+        for cls in CLASS_ORDER:
+            pct = class_totals.get(cls, 0.0)
+            if pct < 0.001:
+                continue
+            r, g, b = CLASS_BASE_COLORS[cls]
+            class_html += (
+                f'<tr>'
+                f'<td style="padding:6px 12px 6px 0;color:#d0d0d0;font-weight:600">{cls}</td>'
+                f'<td style="padding:6px 10px;text-align:right;color:#000;font-weight:600;'
+                f'background:rgb({r},{g},{b})">{pct:.0%}</td>'
+                f'</tr>'
+            )
+        class_html += '</table>'
+
+        col_left, col_right = st.columns([1, 3])
+        with col_left:
+            st.markdown(class_html, unsafe_allow_html=True)
+
         base = alt.Chart(alloc_df)
         pie = base.mark_arc(outerRadius=140).encode(
             theta=alt.Theta("Allocation:Q", stack=True),
@@ -780,9 +888,95 @@ def main():
             text="text_left:N", **lbl_enc,
         )
         chart = (pie + text_r + text_l).properties(height=400)
-        st.altair_chart(chart, width="stretch")
+        with col_right:
+            st.altair_chart(chart, width="stretch")
     else:
         st.info("No allocation data.")
+
+    # --- Performance treemap ---
+    if period == "All" or period is None:
+        _tm_start_str = None
+    elif period == "1D":
+        _tm_start_str = (today - timedelta(days=1)).isoformat()
+    elif period == "YTD":
+        _tm_start_str = date(today.year, 1, 1).isoformat()
+    else:
+        _tm_start_str = (today - PERIODS[period]).isoformat()
+
+    tm_df = _build_treemap_data(open_lots, current_prices, conn, cash_balance, _tm_start_str)
+    if tm_df is not None and not tm_df.empty:
+        st.subheader("Performance")
+        tm_df["Return_pct"] = tm_df["Return"] * 100
+        max_abs = max(tm_df["Return_pct"].abs().max(), 1)
+
+        portfolio_display_name = " + ".join(p["name"] for p in selected)
+        tm_df["Group"] = tm_df["Group"].replace({"Uranium": "\u2622"})  # ☢ radioactive symbol
+        fig = px.treemap(
+            tm_df,
+            path=[px.Constant(portfolio_display_name), "Class", "Group"],
+            values="Value",
+            color="Return_pct",
+            color_continuous_scale=["#d32f2f", "#ffcdd2", "#ffffff", "#c8e6c9", "#2e7d32"],
+            color_continuous_midpoint=0,
+            range_color=[-max_abs, max_abs],
+            custom_data=["Return_pct", "Value"],
+        )
+
+        # Compute class-level and portfolio-level value-weighted returns
+        class_returns = {}
+        for cls, grp in tm_df.groupby("Class"):
+            total_val = grp["Value"].sum()
+            if total_val > 0:
+                class_returns[cls] = (grp["Value"] * grp["Return_pct"]).sum() / total_val
+        total_value = tm_df["Value"].sum()
+        portfolio_return = (
+            (tm_df["Value"] * tm_df["Return_pct"]).sum() / total_value
+            if total_value > 0 else 0.0
+        )
+
+        # Post-process: patch labels for parent nodes, format text for leaves
+        trace = fig.data[0]
+        small_threshold = 0.03  # 3% of portfolio
+        new_labels = list(trace.labels)
+        texts = []
+        for i, node_id in enumerate(trace.ids):
+            label = trace.labels[i]
+            # Root node — bold label with portfolio return
+            if label == portfolio_display_name:
+                new_labels[i] = f"<b>{label}: {portfolio_return:+.2f}%</b>"
+                texts.append("")
+            # Class-level parent — bold label with class return
+            elif label in class_returns:
+                ret = class_returns[label]
+                new_labels[i] = f"<b>{label}: {ret:+.2f}%</b>"
+                texts.append("")
+            # Leaf node (group)
+            else:
+                cd = trace.customdata[i] if trace.customdata is not None else None
+                ret_str = f"{cd[0]:+.2f}%" if cd is not None else ""
+                val = float(cd[1]) if cd is not None else 0.0
+                is_small = val / total_value < small_threshold if total_value > 0 else False
+                if is_small and label != "\u2622":
+                    texts.append(f"<b>{label}:</b> {ret_str}")
+                else:
+                    texts.append(f"<b>{label}</b><br>{ret_str}")
+
+        fig.data[0].labels = new_labels
+        fig.data[0].text = texts
+        fig.data[0].texttemplate = "%{text}"
+        fig.update_traces(
+            textposition="middle center",
+            hovertemplate="<b>%{label}</b><br>Return: %{customdata[0]:+.2f}%<br>Value: $%{customdata[1]:,.0f}<extra></extra>",
+            marker=dict(line=dict(width=2, color="white")),
+        )
+        fig.update_layout(
+            margin=dict(t=30, l=0, r=0, b=0),
+            height=400,
+            coloraxis_showscale=False,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     # --- Positions table ---
     st.subheader("Positions")
