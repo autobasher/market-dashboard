@@ -557,10 +557,22 @@ def main():
         "10Y": relativedelta(years=10),
         "All": None,
     }
-    period = st.pills("Period", list(PERIODS.keys()), default="All")
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        period = st.pills("Period", list(PERIODS.keys()), default="All")
+    with c2:
+        custom_start = st.date_input(
+            "Custom start", value=None, format="DD-MM-YYYY",
+            key=f"custom_start_{portfolio_id}",
+        )
+        st.caption("dd-mm-yyyy · overrides buttons, end = today")
+
+    custom_active = custom_start is not None
+    if custom_active and custom_start > today:
+        st.warning("Start date is in the future — no data in range.")
 
     # --- 1D intraday mode ---
-    is_intraday = period == "1D"
+    is_intraday = period == "1D" and not custom_active
     if is_intraday:
         if prev_close_value and prev_close_value > 0:
             day_return = portfolio_value / prev_close_value - 1
@@ -573,7 +585,9 @@ def main():
     else:
 
         # Compute period start date
-        if period == "All" or period is None:
+        if custom_active:
+            period_start = pd.Timestamp(custom_start)
+        elif period == "All" or period is None:
             period_start = None
         elif period == "YTD":
             period_start = pd.Timestamp(date(today.year, 1, 1))
@@ -894,7 +908,9 @@ def main():
         st.info("No allocation data.")
 
     # --- Performance treemap ---
-    if period == "All" or period is None:
+    if custom_active:
+        _tm_start_str = custom_start.isoformat()
+    elif period == "All" or period is None:
         _tm_start_str = None
     elif period == "1D":
         _tm_start_str = (today - timedelta(days=1)).isoformat()
