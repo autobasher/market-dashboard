@@ -53,6 +53,13 @@ def _store_csv(conn, filename: str, content: bytes, account_id: str, account_nam
     )
 
 
+# Cash class is shown as one box per component instead of a single blob.
+# TIPS and box-spread T-bills get their own leaves; every other cash-class
+# holding lumps into "Money Market". The settlement-cash input is separate.
+_CASH_TIPS = {"VTIP"}
+_CASH_BOX = {"BOXX"}
+
+
 def _build_treemap_data(
     open_lots, current_prices, conn, cash_balance: float, period_start_str: str | None,
 ) -> pd.DataFrame | None:
@@ -97,15 +104,12 @@ def _build_treemap_data(
             return cur / start - 1
         return None
 
-    rows = []
-    for grp, info in DISPLAY_GROUPS.items():
-        grp_value = sum(sym_values.get(s, 0.0) for s in info["symbols"])
-        if grp_value < 0.01:
-            continue
-        # Value-weighted return across symbols in group
+    def _value_return(syms) -> tuple[float, float]:
+        """Total market value and value-weighted return across symbols."""
+        grp_value = sum(sym_values.get(s, 0.0) for s in syms)
         weighted_ret = 0.0
         total_weight = 0.0
-        for s in info["symbols"]:
+        for s in syms:
             val = sym_values.get(s, 0.0)
             if val < 0.01:
                 continue
@@ -114,6 +118,15 @@ def _build_treemap_data(
                 weighted_ret += val * ret
                 total_weight += val
         grp_ret = weighted_ret / total_weight if total_weight > 0 else 0.0
+        return grp_value, grp_ret
+
+    rows = []
+    for grp, info in DISPLAY_GROUPS.items():
+        if info["class"] == "Cash":
+            continue  # cash is subdivided below, not shown as one group
+        grp_value, grp_ret = _value_return(info["symbols"])
+        if grp_value < 0.01:
+            continue
         rows.append({"Class": info["class"], "Group": grp, "Value": grp_value, "Return": grp_ret})
 
     # Ungrouped symbols (OUST, RIVN, etc.)
@@ -124,9 +137,25 @@ def _build_treemap_data(
         ret = _sym_return(sym) or 0.0
         rows.append({"Class": "Equity", "Group": sym, "Value": val, "Return": ret})
 
-    # Cash
+    # Cash class — one leaf per component so the box's size is legible
+    cash_syms = {
+        s for info in DISPLAY_GROUPS.values() if info["class"] == "Cash"
+        for s in info["symbols"]
+    }
+    cash_leaves = [
+        ("TIPS", [s for s in cash_syms if s in _CASH_TIPS]),
+        ("T-Bill Box", [s for s in cash_syms if s in _CASH_BOX]),
+        ("Money Market", [s for s in cash_syms if s not in _CASH_TIPS and s not in _CASH_BOX]),
+    ]
+    for label, syms in cash_leaves:
+        val, ret = _value_return(syms)
+        if val < 0.01:
+            continue
+        rows.append({"Class": "Cash", "Group": label, "Value": val, "Return": ret})
+
+    # Settlement cash (the VMFXX cash-balance input) as its own leaf
     if cash_balance > 0.01:
-        rows.append({"Class": "Cash", "Group": "Cash", "Value": cash_balance, "Return": 0.0})
+        rows.append({"Class": "Cash", "Group": "Settlement Cash", "Value": cash_balance, "Return": 0.0})
 
     return pd.DataFrame(rows) if rows else None
 
