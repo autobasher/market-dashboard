@@ -23,24 +23,28 @@ def _conn_key(conn: sqlite3.Connection, symbol: str) -> tuple[int, str]:
     return (id(conn), symbol)
 
 
-def fetch_historical_prices(
+def _isnan(v) -> bool:
+    try:
+        return v != v  # NaN != NaN
+    except (TypeError, ValueError):
+        return False
+
+
+def _plan_fetch(
     conn: sqlite3.Connection,
     symbol: str,
     start: date,
     end: date,
-) -> int:
-    """Fetch missing historical prices from yfinance and cache them.
+) -> tuple[bool, str, str]:
+    """Decide whether (and what range) to fetch for a symbol given the cache.
 
-    Returns the number of new rows inserted.
+    Returns (need_fetch, fetch_start, fetch_end) as ISO date strings.
     """
     cached_min, cached_max = queries.get_cached_price_range(conn, symbol)
-    key = _conn_key(conn, symbol)
-    high_water = _fetch_high_water.get(key)
+    high_water = _fetch_high_water.get(_conn_key(conn, symbol))
 
     start_str = start.isoformat()
     end_str = end.isoformat()
-
-    # Determine what range (if any) we actually need to fetch
     fetch_start = start_str
     fetch_end = end_str
     need_fetch = False
@@ -59,6 +63,39 @@ def fetch_historical_prices(
     elif high_water is not None and end_str > high_water:
         need_fetch = True
         fetch_start = high_water
+
+    return need_fetch, fetch_start, fetch_end
+
+
+def _extract_series(df: pd.DataFrame, field: str, symbol: str):
+    """Pull a single field's Series for `symbol` out of a yf.download frame.
+
+    Handles both the MultiIndex layout (multi-symbol downloads, and single-symbol
+    downloads on yfinance 1.1+) and flat columns.
+    """
+    cols = df.columns
+    if isinstance(cols, pd.MultiIndex):
+        if (field, symbol) in cols:
+            return df[(field, symbol)]
+        if (symbol, field) in cols:  # group_by='ticker' layout
+            return df[(symbol, field)]
+        return None
+    return df[field] if field in cols else None
+
+
+def fetch_historical_prices(
+    conn: sqlite3.Connection,
+    symbol: str,
+    start: date,
+    end: date,
+) -> int:
+    """Fetch missing historical prices from yfinance and cache them.
+
+    Returns the number of new rows inserted.
+    """
+    key = _conn_key(conn, symbol)
+    need_fetch, fetch_start, fetch_end = _plan_fetch(conn, symbol, start, end)
+    end_str = end.isoformat()
 
     if not need_fetch:
         return 0
@@ -96,6 +133,82 @@ def fetch_historical_prices(
 
     conn.commit()
     return count
+
+
+def fetch_historical_prices_batch(
+    conn: sqlite3.Connection,
+    symbols: list[str],
+    start: date,
+    end: date,
+) -> dict[str, int]:
+    """Batched equivalent of fetch_historical_prices for Yahoo symbols.
+
+    Plans each symbol's needed range independently, then issues ONE yf.download
+    over the union range for the symbols that need data — replacing N sequential
+    HTTP round-trips with one. Over-fetching a wider range is harmless because
+    upserts are idempotent (INSERT OR REPLACE). Falls back to per-symbol fetch
+    if the batched download raises.
+    """
+    results = {sym: 0 for sym in symbols}
+
+    plans = {}
+    for sym in symbols:
+        need, fs, fe = _plan_fetch(conn, sym, start, end)
+        if need:
+            plans[sym] = (fs, fe)
+
+    if not plans:
+        return results
+
+    needed = list(plans.keys())
+    union_start = min(fs for fs, _ in plans.values())
+    union_end = max(fe for _, fe in plans.values())
+    end_str = end.isoformat()
+
+    try:
+        df = yf.download(
+            needed, start=union_start, end=union_end,
+            progress=False, auto_adjust=False, threads=True,
+        )
+    except Exception:
+        logger.exception("Batch yf.download failed for %s — falling back per-symbol", needed)
+        for sym in needed:
+            results[sym] = fetch_historical_prices(conn, sym, start, end)
+        return results
+
+    # Record attempted range for every symbol, even those with no data returned
+    for sym in needed:
+        key = _conn_key(conn, sym)
+        prev = _fetch_high_water.get(key, "")
+        _fetch_high_water[key] = max(end_str, prev)
+
+    if df is None or df.empty:
+        return results
+
+    for sym in needed:
+        close_s = _extract_series(df, "Close", sym)
+        if close_s is None:
+            logger.debug("No Close data for %s in batch download", sym)
+            continue
+        adj_s = _extract_series(df, "Adj Close", sym)
+        vol_s = _extract_series(df, "Volume", sym)
+
+        count = 0
+        for dt_idx in close_s.index:
+            close_val = close_s[dt_idx]
+            if close_val is None or _isnan(close_val):
+                continue
+            close = float(close_val)
+            adj_val = adj_s[dt_idx] if adj_s is not None else None
+            adj_close = float(adj_val) if adj_val is not None and not _isnan(adj_val) else close
+            vol_val = vol_s[dt_idx] if vol_s is not None else None
+            volume = int(vol_val) if vol_val is not None and not _isnan(vol_val) else None
+            queries.upsert_historical_price(conn, sym, dt_idx.date(), close, adj_close, volume)
+            count += 1
+        results[sym] = count
+
+    conn.commit()
+    return results
 
 
 def ensure_splits_for_portfolio(
@@ -209,11 +322,14 @@ def ensure_prices_for_portfolio(
 ) -> dict[str, int]:
     """Fetch/cache prices for all symbols. Returns {symbol: rows_inserted}."""
     results = {}
+    yahoo_syms = []
     for sym in symbols:
         if sym in MONEY_MARKET_TICKERS:
             continue  # money market funds: always $1/share, no price fetch needed
         elif sym in EODHD_TICKERS:
             results[sym] = fetch_eodhd_prices(conn, sym, start, end)
         else:
-            results[sym] = fetch_historical_prices(conn, sym, start, end)
+            yahoo_syms.append(sym)
+    if yahoo_syms:
+        results.update(fetch_historical_prices_batch(conn, yahoo_syms, start, end))
     return results
