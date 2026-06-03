@@ -13,15 +13,19 @@ CREATE TABLE IF NOT EXISTS latest_quotes (
 """
 
 
-_initialized: set[int] = set()
+# Schema-init guard stored in the database via PRAGMA user_version (a bitmask).
+# Per-database and persisted, so it can't be fooled by id(conn) reuse the way a
+# process-level set keyed on id() could (a fresh connection that recycles a dead
+# connection's id would skip initialization and hit "no such table").
+_USER_VERSION_BIT = 0b01  # dashboard schema initialized
 
 
 def initialize(conn: sqlite3.Connection) -> None:
-    key = id(conn)
-    if key in _initialized:
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version & _USER_VERSION_BIT:
         return
     conn.executescript(SCHEMA_SQL)
-    _initialized.add(key)
+    conn.execute(f"PRAGMA user_version = {version | _USER_VERSION_BIT}")
 
 
 def upsert_quote(

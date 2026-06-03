@@ -241,9 +241,11 @@ def test_schema_migration_rename():
     queries.insert_portfolio(conn, "My Portfolio")
     conn.commit()
 
-    # Re-run initialization (simulates app restart — clear cache to mimic new connection)
+    # Re-run initialization (simulates app restart — clear the schema-version
+    # guard bit to mimic a fresh connection re-running the migration)
     from market_dashboard.portfolio import schema as schema_mod
-    schema_mod._initialized.discard(id(conn))
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.execute(f"PRAGMA user_version = {version & ~schema_mod._USER_VERSION_BIT}")
     initialize_portfolio_schema(conn)
 
     assert queries.get_portfolio_by_name(conn, "My Portfolio") is None

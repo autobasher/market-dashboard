@@ -110,12 +110,16 @@ CREATE TABLE IF NOT EXISTS uploaded_csv (
 """
 
 
-_initialized: set[int] = set()
+# Schema-init guard stored in the database via PRAGMA user_version (a bitmask).
+# Shares the integer with the dashboard schema (bit 0); this module owns bit 1.
+# Per-database and persisted, so it can't be fooled by id(conn) reuse the way a
+# process-level set keyed on id() could.
+_USER_VERSION_BIT = 0b10  # portfolio schema initialized
 
 
 def initialize_portfolio_schema(conn: sqlite3.Connection) -> None:
-    key = id(conn)
-    if key in _initialized:
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version & _USER_VERSION_BIT:
         return
     conn.executescript(PORTFOLIO_SCHEMA_SQL)
     # Idempotent migrations for existing databases
@@ -138,7 +142,12 @@ def initialize_portfolio_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE portfolios SET name = 'Ariel1' WHERE name = 'My Portfolio'"
     )
-    _initialized.add(key)
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.execute(f"PRAGMA user_version = {version | _USER_VERSION_BIT}")
+    # Commit so the migration's write transaction releases its WAL write lock.
+    # Without this the connection holds the lock open, and the next Streamlit
+    # rerun's connection raises "database is locked" on this same UPDATE.
+    conn.commit()
 
 
 def _migrate_uploaded_csv(conn: sqlite3.Connection) -> None:
