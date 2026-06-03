@@ -94,8 +94,9 @@ SECTION_LABELS = {
 
 DISPLAY_GROUPS: dict[str, dict] = {
     "US Multifactor": {"symbols": ["AVLV", "AVUV", "DFAT", "QVAL", "DFUV"], "class": "Equity"},
-    "Non-US Developed Multifactor": {"symbols": ["DFIV", "AVDV", "DISV", "EWJV", "IVAL", "AVIV", "IMOM"], "class": "Equity"},
+    "Non-US Developed Multifactor": {"symbols": ["DFIV", "AVDV", "DISV", "DFSV", "EWJV", "IVAL", "AVIV", "IMOM"], "class": "Equity"},
     "Emerging Markets Multifactor": {"symbols": ["DFEV", "AVES", "GVAL", "GMOM", "FRDM"], "class": "Equity"},
+    "Global Multifactor": {"symbols": ["AVGV", "AAVM"], "class": "Equity"},
     "Developed Markets Small-Value": {"symbols": ["AVGS.L", "IE00B2PC0609.EUFUND"], "class": "Equity"},
     "Developed Markets Value": {"symbols": ["IE00B3V7VL84.EUFUND", "JPGL.L"], "class": "Equity"},
     "Emerging Markets Value": {"symbols": ["IE00B0HCGS80.EUFUND"], "class": "Equity"},
@@ -108,7 +109,7 @@ DISPLAY_GROUPS: dict[str, dict] = {
     "US Treasuries": {"symbols": ["VGIT", "BOXA", "VDTA.L"], "class": "Fixed Income"},
     "US Linkers": {"symbols": ["SCHP", "IDTP.L", "TIPS.L"], "class": "Fixed Income"},
     "Global Linkers": {"symbols": ["IGIL.L"], "class": "Fixed Income"},
-    "Global Aggregate": {"symbols": ["IE00BG85LS38.EUFUND", "AGUG.AS"], "class": "Fixed Income"},
+    "Global Aggregate": {"symbols": ["IE00BG85LS38.EUFUND", "AGUG.AS", "DFGP"], "class": "Fixed Income"},
     "Emerging Markets Sovereign": {"symbols": ["VDET.L"], "class": "Fixed Income"},
     "Non-US Bonds": {"symbols": ["DFGX", "WIP", "BNDX"], "class": "Fixed Income"},
     "Cash": {"symbols": ["VYFXX", "VMMXX", "VMFXX", "BOXX", "VTIP", "LU0128497707.EUFUND"], "class": "Cash"},
