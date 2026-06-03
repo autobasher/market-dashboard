@@ -13,8 +13,17 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+import streamlit as st
+
+
+@st.cache_resource
 def get_app_connection() -> sqlite3.Connection:
-    """Get a connection with both dashboard and portfolio schemas initialized."""
+    """Get a connection with both dashboard and portfolio schemas initialized.
+
+    Cached per-process: every Streamlit rerun reuses the one connection instead
+    of opening a new one. This prevents connections from piling up (each holding
+    a WAL write lock) and made the ``id(conn)``-keyed migration guards unreliable.
+    """
     from market_dashboard.config import Settings
     from market_dashboard.database.queries import initialize
     from market_dashboard.portfolio.schema import initialize_portfolio_schema
