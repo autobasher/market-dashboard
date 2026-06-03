@@ -11,22 +11,14 @@ from market_dashboard.config import (
     SECTION_LABELS,
     Settings,
 )
-from market_dashboard.database.connection import get_connection
+from market_dashboard.database.connection import get_app_connection
 from market_dashboard.database import queries
 from market_dashboard.poller import QuotePoller
 from market_dashboard.dashboard.history_fetcher import HistoricalPriceFetcher
-from market_dashboard.portfolio.schema import initialize_portfolio_schema
 
 logger = logging.getLogger(__name__)
 
 _settings = Settings()
-
-
-def _get_conn():
-    conn = get_connection(_settings.db_path)
-    queries.initialize(conn)
-    initialize_portfolio_schema(conn)
-    return conn
 
 
 @st.cache_resource
@@ -269,7 +261,7 @@ def main():
 
     @st.fragment(run_every=60)
     def _live_display():
-        conn = _get_conn()
+        conn = get_app_connection()
         rows = queries.get_all_quotes(conn)
 
         quote_map: dict[str, dict] = {}
