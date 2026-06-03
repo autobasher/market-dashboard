@@ -71,10 +71,13 @@ def _find_price(sym_prices: dict[str, float], target_date: str) -> float | None:
 def build_daily_snapshots(
     conn: sqlite3.Connection,
     portfolio_id: int,
-    start: date | None = None,
     end: date | None = None,
 ) -> pd.DataFrame:
     """Build daily portfolio valuations from transactions and prices.
+
+    Always rebuilds the full history from the first transaction (see the note
+    on incremental resume below); only ``end`` (the last day to value) is a
+    parameter.
 
     total_value = equity positions + VMFXX settlement fund balance.
     total_cost  = cumulative net external cash flows (derived from residuals).

@@ -225,7 +225,7 @@ def _do_import(conn, portfolio_name: str, csv_text: str | None = None,
             ensure_prices_for_portfolio(conn, all_symbols, earliest, today)
 
         with st.spinner("Building snapshots..."):
-            build_daily_snapshots(conn, portfolio_id, earliest, today)
+            build_daily_snapshots(conn, portfolio_id)
 
     # Rebuild snapshots for any aggregates containing this portfolio
     aggregates = queries.get_aggregates_containing(conn, portfolio_id)
@@ -525,7 +525,8 @@ def main():
         current_prices = queries.get_latest_prices(conn, symbols)
 
     if symbols and all_txs:
-        # Rebuild snapshots if stale or missing
+        # build_daily_snapshots always full-rebuilds from the first transaction,
+        # so we only gate on staleness to run it at most once per day per portfolio.
         latest_snap = conn.execute(
             "SELECT MAX(snap_date) as max_date FROM portfolio_snapshots WHERE portfolio_id = ?",
             (portfolio_id,),
@@ -538,17 +539,15 @@ def main():
                             "SELECT MAX(snap_date) as max_date FROM portfolio_snapshots WHERE portfolio_id = ?",
                             (sel["portfolio_id"],),
                         ).fetchone()
-                        member_start = earliest
-                        if member_snap and member_snap["max_date"]:
-                            member_start = date.fromisoformat(member_snap["max_date"]) + timedelta(days=1)
-                        if member_start <= today:
-                            build_daily_snapshots(conn, sel["portfolio_id"], member_start, today)
+                        member_stale = (
+                            not member_snap or not member_snap["max_date"]
+                            or member_snap["max_date"] < today.isoformat()
+                        )
+                        if member_stale:
+                            build_daily_snapshots(conn, sel["portfolio_id"])
                     _rebuild_aggregate_snapshots(conn, portfolio_id)
                 else:
-                    snap_start = earliest
-                    if latest_snap and latest_snap["max_date"]:
-                        snap_start = date.fromisoformat(latest_snap["max_date"]) + timedelta(days=1)
-                    build_daily_snapshots(conn, portfolio_id, snap_start, today)
+                    build_daily_snapshots(conn, portfolio_id)
 
     snapshots = queries.get_snapshots(conn, portfolio_id)
     disposals = queries.get_disposals(conn)

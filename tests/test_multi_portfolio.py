@@ -219,11 +219,11 @@ def test_aggregate_snapshots(multi_db):
     conn.commit()
 
     # Build individual snapshots first
-    build_daily_snapshots(conn, pid1, date(2024, 1, 2), date(2024, 1, 2))
-    build_daily_snapshots(conn, pid2, date(2024, 1, 2), date(2024, 1, 2))
+    build_daily_snapshots(conn, pid1, date(2024, 1, 2))
+    build_daily_snapshots(conn, pid2, date(2024, 1, 2))
 
     # Build aggregate
-    df = build_daily_snapshots(conn, agg_id, date(2024, 1, 2), date(2024, 1, 2))
+    df = build_daily_snapshots(conn, agg_id, date(2024, 1, 2))
     assert len(df) == 1
     # Aggregate value = 10*100 + 5*100 = 1500
     assert df.iloc[0]["total_value"] == pytest.approx(1500.0)

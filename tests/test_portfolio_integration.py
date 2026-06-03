@@ -68,7 +68,7 @@ def test_full_pipeline(portfolio_db):
         )
     conn.commit()
 
-    df = build_daily_snapshots(conn, pid, date(2024, 4, 1), date(2024, 4, 5))
+    df = build_daily_snapshots(conn, pid, date(2024, 4, 5))
     # Snapshots rebuild from first transaction date (Jan 2) through Apr 5
     assert len(df) >= 5
     # Verify the April rows with prices have positive values

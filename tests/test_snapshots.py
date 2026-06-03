@@ -8,7 +8,7 @@ from market_dashboard.portfolio.snapshots import build_daily_snapshots
 
 def test_empty_portfolio(portfolio_db):
     conn, pid = portfolio_db
-    df = build_daily_snapshots(conn, pid, date(2024, 1, 1), date(2024, 1, 5))
+    df = build_daily_snapshots(conn, pid, date(2024, 1, 5))
     assert df.empty
 
 
@@ -26,7 +26,7 @@ def test_snapshot_with_transactions(portfolio_db):
     queries.upsert_historical_price(conn, "VTI", date(2024, 1, 3), 105.0, 105.0, 1000000)
     conn.commit()
 
-    df = build_daily_snapshots(conn, pid, date(2024, 1, 2), date(2024, 1, 3))
+    df = build_daily_snapshots(conn, pid, date(2024, 1, 3))
     assert len(df) == 2
 
     # Cash model tracks VMFXX settlement fund balance from sweeps only.
@@ -51,11 +51,11 @@ def test_snapshots_cached(portfolio_db):
     conn.commit()
 
     # Build once
-    build_daily_snapshots(conn, pid, date(2024, 1, 2), date(2024, 1, 2))
+    build_daily_snapshots(conn, pid, date(2024, 1, 2))
     cached = queries.get_snapshots(conn, pid)
     assert len(cached) == 1
 
     # Build again — should overwrite (delete + re-insert)
-    build_daily_snapshots(conn, pid, date(2024, 1, 2), date(2024, 1, 2))
+    build_daily_snapshots(conn, pid, date(2024, 1, 2))
     cached2 = queries.get_snapshots(conn, pid)
     assert len(cached2) == 1
